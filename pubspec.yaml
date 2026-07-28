@@ -1,0 +1,49 @@
+name: smart_doc_scanner
+description: MS ScanNow — Scanner inteligente de documentos.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Scanner principal — ML Kit (dispositivo real)
+  flutter_doc_scanner: ^0.0.18
+
+  # Câmera fallback — funciona em emulador e dispositivo real
+  image_picker: ^1.1.2
+
+  # OCR
+  google_mlkit_text_recognition: ^0.13.0
+
+  # PDF
+  pdf: ^3.11.0
+  syncfusion_flutter_pdfviewer: ^27.2.5
+
+  # Armazenamento
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+
+  # Utilitários
+  path_provider: ^2.1.2
+  permission_handler: ^11.3.1
+  share_plus: ^12.0.2
+  image: ^4.2.0
+
+  # Assinatura
+  signature: ^5.4.0
+
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  hive_generator: ^2.0.1
+  build_runner: ^2.4.9
+
+flutter:
+  uses-material-design: true

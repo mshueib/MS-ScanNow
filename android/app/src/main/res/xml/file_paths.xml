@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!--
+        Permite acesso à pasta de cache da aplicação.
+        O cunning_document_scanner guarda as imagens recortadas aqui
+        antes de as devolver ao Flutter.
+    -->
+    <cache-path
+        name="cache"
+        path="."/>
+
+    <!--
+        Acesso ao armazenamento externo da aplicação
+        (Android/data/<package>/files/).
+    -->
+    <external-files-path
+        name="external_files"
+        path="."/>
+
+    <!--
+        Acesso a ficheiros internos da aplicação.
+    -->
+    <files-path
+        name="files"
+        path="."/>
+</paths>
