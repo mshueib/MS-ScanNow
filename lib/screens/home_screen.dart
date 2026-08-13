@@ -22,15 +22,14 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  // 0 = Início · 1 = Docs/Recentes (Histórico) · 2 = Perfil
   int _tab = 0;
 
-  void _onNav(int i) {
-    if (i == 2) {
-      Navigator.push(
-          context, MaterialPageRoute(builder: (_) => const ScannerScreen()));
-      return;
-    }
-    setState(() => _tab = i > 2 ? i - 1 : i);
+  void _onNav(int i) => setState(() => _tab = i);
+
+  void _openScanner() {
+    Navigator.push(
+        context, MaterialPageRoute(builder: (_) => const ScannerScreen()));
   }
 
   static const _tabs = [_HomeTab(), HistoryScreen(), ProfileScreen()];
@@ -43,7 +42,8 @@ class _HomeScreenState extends State<HomeScreen> {
         index: _tab.clamp(0, _tabs.length - 1),
         children: _tabs,
       ),
-      bottomNavigationBar: _BottomNav(current: _tab, onTap: _onNav),
+      bottomNavigationBar:
+          _BottomNav(current: _tab, onTap: _onNav, onScan: _openScanner),
     );
   }
 }
@@ -636,7 +636,9 @@ class _DocRow extends StatelessWidget {
 class _BottomNav extends StatelessWidget {
   final int current;
   final ValueChanged<int> onTap;
-  const _BottomNav({required this.current, required this.onTap});
+  final VoidCallback onScan;
+  const _BottomNav(
+      {required this.current, required this.onTap, required this.onScan});
 
   @override
   Widget build(BuildContext context) {
@@ -708,7 +710,7 @@ class _BottomNav extends StatelessWidget {
             right: 0,
             child: Center(
               child: GestureDetector(
-                onTap: () => onTap(2),
+                onTap: onScan,
                 child: Container(
                   width: 52,
                   height: 52,
@@ -728,21 +730,22 @@ class _BottomNav extends StatelessWidget {
     );
   }
 
-  // lógico: 0=Início 1=Docs 2=ScanFAB 3=Recentes 4=Perfil
+  // lógico: 0=Início 1=Docs/Recentes(Histórico) 2=Perfil
+  // O FAB (posição 2 da barra) tem o seu próprio callback (onScan) e não
+  // faz parte deste espaço de índices — evita a colisão que fazia o botão
+  // "Recentes" abrir o Scanner em vez de mudar de separador.
   int _toBarIndex(int logic) {
-    const map = [0, 1, 2, 3, 4];
     if (logic == 0) return 0;
-    if (logic == 1) return 1;
-    if (logic == 2) return 3;
-    if (logic == 3) return 4;
+    if (logic == 1) return 1; // realça "Docs" — mesmo ecrã de "Recentes"
+    if (logic == 2) return 4;
     return 0;
   }
 
   int _toLogicIndex(int bar) {
     if (bar == 0) return 0;
-    if (bar == 1) return 1;
-    if (bar == 3) return 2; // Recentes → tab index 2
-    if (bar == 4) return 3; // Perfil → tab index 3
+    if (bar == 1) return 1; // Docs → Histórico
+    if (bar == 3) return 1; // Recentes → mesmo ecrã de Histórico
+    if (bar == 4) return 2; // Perfil
     return 0;
   }
 }

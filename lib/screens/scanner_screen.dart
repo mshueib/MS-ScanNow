@@ -367,6 +367,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
         } else {
           // Ambos já capturados — substitui o verso
           _idBack = paths.first;
+          _idBackIsPdf = false;
           _showSnack('Verso actualizado.');
         }
       });
@@ -427,7 +428,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
       content: Text(msg),
       behavior: SnackBarBehavior.floating,
       action: action
-          ? SnackBarAction(label: 'Definições', onPressed: openAppSettings)
+          ? const SnackBarAction(label: 'Definições', onPressed: openAppSettings)
           : null,
     ));
   }
@@ -498,6 +499,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
               _pages.clear();
               _idFront = null;
               _idBack = null;
+              _idFrontIsPdf = false;
+              _idBackIsPdf = false;
             }),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
@@ -796,7 +799,7 @@ class _CornerPainter extends CustomPainter {
     const l = 28.0;
     final w = size.width, h = size.height;
     canvas.drawLine(const Offset(0, l), Offset.zero, p);
-    canvas.drawLine(Offset.zero, Offset(l, 0), p);
+    canvas.drawLine(Offset.zero, const Offset(l, 0), p);
     canvas.drawLine(Offset(w - l, 0), Offset(w, 0), p);
     canvas.drawLine(Offset(w, 0), Offset(w, l), p);
     canvas.drawLine(Offset(0, h - l), Offset(0, h), p);
@@ -925,7 +928,7 @@ class _IdSlot extends StatelessWidget {
             : Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.credit_card_outlined,
+                  const Icon(Icons.credit_card_outlined,
                       color: Colors.white30, size: 22),
                   const SizedBox(height: 4),
                   Text(label,

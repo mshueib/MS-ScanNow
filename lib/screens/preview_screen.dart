@@ -246,7 +246,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
               pw.Expanded(
                   child: pw.Center(
                       child: pw.Text('Documento digitalizado',
-                          style: pw.TextStyle(fontSize: 18)))),
+                          style: const pw.TextStyle(fontSize: 18)))),
               pw.Container(
                 alignment: pw.Alignment.centerRight,
                 child: pw.Container(
@@ -755,7 +755,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
 
   Widget _buildDirectPdfScaffold() {
     // Modo BI com 2 PDFs — mostra preview lado a lado com selector de layout
-    if (widget.idMode && _resolvedPaths.length >= 1) {
+    if (widget.idMode && _resolvedPaths.isNotEmpty) {
       return _buildIdPdfScaffold();
     }
 
@@ -1202,8 +1202,45 @@ class _IdPdfPreview extends StatelessWidget {
   final String? path;
   final String label;
   const _IdPdfPreview({required this.path, required this.label});
+
+  /// Verifica a assinatura de bytes do próprio ficheiro em vez de assumir
+  /// por tipo global — no modo BI, um lado pode ser PDF (Samsung/ML Kit)
+  /// e o outro uma imagem pura (fallback de câmara), mesmo com
+  /// isPdfDirect == true para o par.
+  bool _isPdf(String p) {
+    if (p.toLowerCase().endsWith('.pdf')) return true;
+    try {
+      final raf = File(p).openSync();
+      final header = raf.readSync(4);
+      raf.closeSync();
+      return header.length == 4 &&
+          header[0] == 0x25 &&
+          header[1] == 0x50 &&
+          header[2] == 0x44 &&
+          header[3] == 0x46;
+    } catch (_) {
+      return false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    Widget content;
+    if (path == null || !File(path!).existsSync()) {
+      content = Center(
+        child:
+            Icon(Icons.credit_card_outlined, size: 48, color: Colors.grey.shade400),
+      );
+    } else if (_isPdf(path!)) {
+      content = SfPdfViewer.file(
+        File(path!),
+        canShowScrollHead: false,
+        canShowScrollStatus: false,
+      );
+    } else {
+      content = Image.file(File(path!), fit: BoxFit.contain);
+    }
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(10),
       child: Container(
@@ -1213,16 +1250,7 @@ class _IdPdfPreview extends StatelessWidget {
           borderRadius: BorderRadius.circular(10),
         ),
         clipBehavior: Clip.antiAlias,
-        child: path != null && File(path!).existsSync()
-            ? SfPdfViewer.file(
-                File(path!),
-                canShowScrollHead: false,
-                canShowScrollStatus: false,
-              )
-            : Center(
-                child: Icon(Icons.credit_card_outlined,
-                    size: 48, color: Colors.grey.shade400),
-              ),
+        child: content,
       ),
     );
   }
