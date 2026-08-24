@@ -134,7 +134,7 @@ class _SignatureScreenState extends State<SignatureScreen> {
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(14),
                   border:
-                      Border.all(color: _kBlue.withOpacity(0.25), width: 1.5),
+                      Border.all(color: _kBlue.withValues(alpha: 0.25), width: 1.5),
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(13),
@@ -194,7 +194,7 @@ class _SignatureScreenState extends State<SignatureScreen> {
                           boxShadow: _penColor == c
                               ? [
                                   BoxShadow(
-                                      color: c.withOpacity(0.5),
+                                      color: c.withValues(alpha: 0.5),
                                       blurRadius: 6,
                                       spreadRadius: 1)
                                 ]
@@ -214,7 +214,7 @@ class _SignatureScreenState extends State<SignatureScreen> {
                         margin: const EdgeInsets.only(left: 6),
                         decoration: BoxDecoration(
                           color: _penWidth == w
-                              ? _kBlue.withOpacity(0.1)
+                              ? _kBlue.withValues(alpha: 0.1)
                               : Colors.transparent,
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(

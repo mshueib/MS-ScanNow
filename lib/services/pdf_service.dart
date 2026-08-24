@@ -12,7 +12,7 @@ class PDFService {
     final pdf = pw.Document();
 
     for (final path in paths) {
-      final compressed = await compute(_compressImage, path);
+      final compressed = await compute(compressImage, path);
       final image = pw.MemoryImage(compressed);
       pdf.addPage(pw.Page(build: (_) => pw.Center(child: pw.Image(image))));
     }
@@ -25,9 +25,17 @@ class PDFService {
     return file;
   }
 
-  /// Executado em Isolate via compute — redimensiona e comprime.
-  static Uint8List _compressImage(String path) {
-    final bytes = File(path).readAsBytesSync();
+  /// Redimensiona e comprime uma imagem para uso em PDF. É uma função
+  /// top-level-safe (estática, sem estado) para poder correr em isolate
+  /// via `compute()` a partir de qualquer ecrã que gere PDFs.
+  static Uint8List compressImage(String path) {
+    return compressBytes(File(path).readAsBytesSync());
+  }
+
+  /// Igual a [compressImage], mas a partir de bytes já em memória — evita
+  /// uma leitura de disco duplicada quando o chamador já tem os bytes
+  /// (ex.: depois de verificar a assinatura do ficheiro).
+  static Uint8List compressBytes(Uint8List bytes) {
     img.Image? image = img.decodeImage(bytes);
     if (image == null) return bytes;
 

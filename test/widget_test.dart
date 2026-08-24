@@ -1,30 +1,31 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
+// Teste de fumo: garante que a app arranca (com uma caixa Hive de teste) e
+// mostra o ecrã inicial, sem depender de nenhum estado deixado por outros
+// testes.
+
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:doc_scanner/main.dart';
+import 'package:hive/hive.dart';
+import 'package:smart_doc_scanner/main.dart';
+import 'package:smart_doc_scanner/models/document_model.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('App arranca e mostra o ecrã principal', (tester) async {
+    final tempDir = await Directory.systemTemp.createTemp('ms_scannow_test');
+    Hive.init(tempDir.path);
+    Hive.registerAdapter(DocumentModelAdapter());
+    await Hive.openBox<DocumentModel>('documents');
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    addTearDown(() async {
+      await Hive.close();
+      await tempDir.delete(recursive: true);
+    });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    await tester.pumpWidget(const ScannerApp());
+    await tester.pumpAndSettle();
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.text('MS ScanNow'), findsWidgets);
+    expect(find.byIcon(Icons.document_scanner), findsWidgets);
   });
 }

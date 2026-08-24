@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:share_plus/share_plus.dart';
@@ -132,7 +134,7 @@ class _Header extends StatelessWidget {
             child: Container(
               height: 40,
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.15),
+                color: Colors.white.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: const Row(
@@ -243,7 +245,7 @@ class _QuickActions extends StatelessWidget {
     );
   }
 
-  void _onTap(BuildContext context, String label) async {
+  void _onTap(BuildContext context, String label) {
     switch (label) {
       case 'Scanner':
         Navigator.push(
@@ -340,9 +342,23 @@ class _SharePicker extends StatelessWidget {
                     maxLines: 1, overflow: TextOverflow.ellipsis),
                 subtitle: Text(date, style: const TextStyle(fontSize: 12)),
                 onTap: () async {
+                  final messenger = ScaffoldMessenger.of(context);
                   Navigator.pop(ctx);
-                  await Share.shareXFiles([XFile(doc.path)],
-                      text: 'Documento digitalizado com MS ScanNow');
+                  if (!File(doc.path).existsSync()) {
+                    messenger.showSnackBar(const SnackBar(
+                        content: Text(
+                            'Ficheiro não encontrado — pode ter sido apagado.')));
+                    return;
+                  }
+                  try {
+                    await SharePlus.instance.share(ShareParams(
+                        files: [XFile(doc.path)],
+                        text: 'Documento digitalizado com MS ScanNow'));
+                  } catch (_) {
+                    messenger.showSnackBar(const SnackBar(
+                        content:
+                            Text('Não foi possível partilhar o documento.')));
+                  }
                 },
               );
             },
@@ -454,7 +470,9 @@ class _ToolGrid extends StatelessWidget {
         break;
       case 'BI / ID':
         Navigator.push(
-            context, MaterialPageRoute(builder: (_) => const ScannerScreen()));
+            context,
+            MaterialPageRoute(
+                builder: (_) => const ScannerScreen(initialMode: ScanMode.id)));
         break;
       case 'Organizar':
         Navigator.push(
@@ -642,90 +660,103 @@ class _BottomNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return NavigationBarTheme(
-      data: NavigationBarThemeData(
-        backgroundColor: _kCard,
-        indicatorColor: Colors.transparent,
-        labelTextStyle: WidgetStateProperty.resolveWith((states) {
-          final active = states.contains(WidgetState.selected);
-          return TextStyle(
-            fontSize: 10,
-            fontWeight: active ? FontWeight.w600 : FontWeight.normal,
-            color: active ? _kBlue : const Color(0xFFBBBBBB),
-          );
-        }),
-        iconTheme: WidgetStateProperty.resolveWith((states) {
-          final active = states.contains(WidgetState.selected);
-          return IconThemeData(
-            color: active ? _kBlue : const Color(0xFFBBBBBB),
-            size: 22,
-          );
-        }),
-        overlayColor: WidgetStateProperty.all(Colors.transparent),
-        height: 64,
-        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-      ),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: Container(height: 0.5, color: _kBorder),
-          ),
-          NavigationBar(
-            selectedIndex: _toBarIndex(current),
-            onDestinationSelected: (i) => onTap(_toLogicIndex(i)),
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.home_outlined),
-                selectedIcon: Icon(Icons.home),
-                label: 'Início',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.folder_outlined),
-                selectedIcon: Icon(Icons.folder),
-                label: 'Docs',
-              ),
-              NavigationDestination(
-                icon: SizedBox(width: 48),
-                label: '',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.history_outlined),
-                selectedIcon: Icon(Icons.history),
-                label: 'Recentes',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.person_outline),
-                selectedIcon: Icon(Icons.person),
-                label: 'Perfil',
-              ),
-            ],
-          ),
-          Positioned(
-            top: -16,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: GestureDetector(
-                onTap: onScan,
-                child: Container(
-                  width: 52,
-                  height: 52,
-                  decoration: BoxDecoration(
-                    color: _kBlue,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: _kBg, width: 3),
+    // NavigationBar só reserva espaço para MediaQuery.padding.bottom (o
+    // "safe area" visual), mas em ecrãs com navegação por gestos a zona de
+    // deteção de gestos (systemGestureInsets.bottom) é maior do que isso —
+    // sem esta compensação extra, a parte inferior dos botões fica dentro
+    // dessa zona e os toques podem ser intercetados pelo gesto do sistema
+    // em vez de chegarem à app.
+    final gestureBottom = MediaQuery.systemGestureInsetsOf(context).bottom;
+    final safeBottom = MediaQuery.paddingOf(context).bottom;
+    final extraBottom = math.max(0.0, gestureBottom - safeBottom);
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: extraBottom),
+      child: NavigationBarTheme(
+        data: NavigationBarThemeData(
+          backgroundColor: _kCard,
+          indicatorColor: Colors.transparent,
+          labelTextStyle: WidgetStateProperty.resolveWith((states) {
+            final active = states.contains(WidgetState.selected);
+            return TextStyle(
+              fontSize: 10,
+              fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+              color: active ? _kBlue : const Color(0xFFBBBBBB),
+            );
+          }),
+          iconTheme: WidgetStateProperty.resolveWith((states) {
+            final active = states.contains(WidgetState.selected);
+            return IconThemeData(
+              color: active ? _kBlue : const Color(0xFFBBBBBB),
+              size: 22,
+            );
+          }),
+          overlayColor: WidgetStateProperty.all(Colors.transparent),
+          height: 64,
+          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        ),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Container(height: 0.5, color: _kBorder),
+            ),
+            NavigationBar(
+              selectedIndex: _toBarIndex(current),
+              onDestinationSelected: (i) => onTap(_toLogicIndex(i)),
+              destinations: const [
+                NavigationDestination(
+                  icon: Icon(Icons.home_outlined),
+                  selectedIcon: Icon(Icons.home),
+                  label: 'Início',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.folder_outlined),
+                  selectedIcon: Icon(Icons.folder),
+                  label: 'Docs',
+                ),
+                NavigationDestination(
+                  icon: SizedBox(width: 48),
+                  label: '',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.history_outlined),
+                  selectedIcon: Icon(Icons.history),
+                  label: 'Recentes',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.person_outline),
+                  selectedIcon: Icon(Icons.person),
+                  label: 'Perfil',
+                ),
+              ],
+            ),
+            Positioned(
+              top: -16,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: GestureDetector(
+                  onTap: onScan,
+                  child: Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: _kBlue,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: _kBg, width: 3),
+                    ),
+                    child: const Icon(Icons.document_scanner,
+                        color: Colors.white, size: 24),
                   ),
-                  child: const Icon(Icons.document_scanner,
-                      color: Colors.white, size: 24),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

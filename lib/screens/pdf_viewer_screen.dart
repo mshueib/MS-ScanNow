@@ -24,14 +24,22 @@ class _PDFViewerScreenState extends State<PDFViewerScreen> {
   }
 
   Future<void> _share() async {
-    await Share.shareXFiles(
-      [XFile(widget.path)],
-      text: 'Documento digitalizado',
-    );
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await SharePlus.instance.share(ShareParams(
+        files: [XFile(widget.path)],
+        text: 'Documento digitalizado',
+      ));
+    } catch (_) {
+      messenger.showSnackBar(
+          const SnackBar(content: Text('Não foi possível partilhar o documento.')));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final fileMissing = !File(widget.path).existsSync();
+
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -44,27 +52,43 @@ class _PDFViewerScreenState extends State<PDFViewerScreen> {
           IconButton(
             icon: const Icon(Icons.share),
             tooltip: 'Compartilhar',
-            onPressed: _share,
+            onPressed: fileMissing ? null : _share,
           ),
         ],
       ),
-      body: SfPdfViewer.file(
-        File(widget.path),
-        controller: _controller,
-        onDocumentLoaded: (details) {
-          setState(() => _totalPages = details.document.pages.count);
-        },
-        onPageChanged: (details) {
-          setState(() => _currentPage = details.newPageNumber);
-        },
-        onDocumentLoadFailed: (details) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Erro ao abrir PDF: ${details.description}'),
+      body: fileMissing
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.picture_as_pdf_outlined,
+                      size: 64, color: Colors.grey.shade400),
+                  const SizedBox(height: 12),
+                  const Text('Ficheiro não encontrado',
+                      style: TextStyle(fontSize: 16)),
+                  const SizedBox(height: 4),
+                  Text('Pode ter sido apagado ou movido fora da app.',
+                      style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+                ],
+              ),
+            )
+          : SfPdfViewer.file(
+              File(widget.path),
+              controller: _controller,
+              onDocumentLoaded: (details) {
+                setState(() => _totalPages = details.document.pages.count);
+              },
+              onPageChanged: (details) {
+                setState(() => _currentPage = details.newPageNumber);
+              },
+              onDocumentLoadFailed: (details) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Erro ao abrir PDF: ${details.description}'),
+                  ),
+                );
+              },
             ),
-          );
-        },
-      ),
     );
   }
 }

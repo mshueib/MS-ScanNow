@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import '../models/document_model.dart';
+import '../services/storage_service.dart';
 
 const _kBlue = Color(0xFF1A73E8);
 
@@ -99,11 +100,20 @@ class ProfileScreen extends StatelessWidget {
               builder: (_, Box<DocumentModel> b, __) {
                 final docs = b.values.toList().reversed.toList();
                 if (docs.isEmpty) {
-                  return const Padding(
-                    padding: EdgeInsets.all(24),
+                  return Padding(
+                    padding: const EdgeInsets.all(24),
                     child: Center(
-                        child: Text('Nenhum documento ainda.',
-                            style: TextStyle(color: Colors.grey))),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.folder_open_outlined,
+                              size: 48, color: Colors.grey.shade400),
+                          const SizedBox(height: 8),
+                          const Text('Nenhum documento ainda.',
+                              style: TextStyle(color: Colors.grey)),
+                        ],
+                      ),
+                    ),
                   );
                 }
                 return Column(
@@ -122,22 +132,31 @@ class ProfileScreen extends StatelessWidget {
               label: 'Partilhar todos os documentos',
               color: _kBlue,
               onTap: () async {
+                final messenger = ScaffoldMessenger.of(context);
                 final docs = box.values.toList();
-                if (docs.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                final files = docs
+                    .where((d) => File(d.path).existsSync())
+                    .map((d) => XFile(d.path))
+                    .toList();
+                if (files.isEmpty) {
+                  messenger.showSnackBar(const SnackBar(
                       content: Text('Nenhum documento para partilhar.')));
                   return;
                 }
-                final files = docs.map((d) => XFile(d.path)).toList();
-                await Share.shareXFiles(files,
-                    text: 'Documentos do MS ScanNow');
+                try {
+                  await SharePlus.instance
+                      .share(ShareParams(files: files, text: 'Documentos do MS ScanNow'));
+                } catch (_) {
+                  messenger.showSnackBar(const SnackBar(
+                      content: Text('Não foi possível partilhar os documentos.')));
+                }
               },
             ),
             _ActionTile(
               icon: Icons.delete_sweep_outlined,
               label: 'Limpar todos os documentos',
               color: const Color(0xFFD93025),
-              onTap: () => _confirmClearAll(context, box),
+              onTap: () => _confirmClearAll(context),
             ),
             _ActionTile(
               icon: Icons.info_outline,
@@ -173,7 +192,7 @@ class ProfileScreen extends StatelessWidget {
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
-  void _confirmClearAll(BuildContext context, Box<DocumentModel> box) {
+  void _confirmClearAll(BuildContext context) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -185,11 +204,20 @@ class ProfileScreen extends StatelessWidget {
               onPressed: () => Navigator.pop(ctx),
               child: const Text('Cancelar')),
           FilledButton(
-            onPressed: () {
-              box.clear();
-              Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                  content: Text('Todos os documentos eliminados.')));
+            onPressed: () async {
+              final navigator = Navigator.of(ctx);
+              final messenger = ScaffoldMessenger.of(context);
+              try {
+                await StorageService.deleteAll();
+                navigator.pop();
+                messenger.showSnackBar(const SnackBar(
+                    content: Text('Todos os documentos eliminados.')));
+              } catch (_) {
+                navigator.pop();
+                messenger.showSnackBar(const SnackBar(
+                    content:
+                        Text('Não foi possível eliminar todos os documentos.')));
+              }
             },
             style: FilledButton.styleFrom(
                 backgroundColor: const Color(0xFFD93025)),
@@ -337,8 +365,22 @@ class _ProfileDocRow extends StatelessWidget {
           ),
           IconButton(
             icon: const Icon(Icons.share_outlined, color: _kBlue, size: 18),
-            onPressed: () => Share.shareXFiles([XFile(doc.path)],
-                text: 'Documento do MS ScanNow'),
+            onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              if (!File(doc.path).existsSync()) {
+                messenger.showSnackBar(const SnackBar(
+                    content: Text('Ficheiro não encontrado — pode ter sido apagado.')));
+                return;
+              }
+              try {
+                await SharePlus.instance.share(ShareParams(
+                    files: [XFile(doc.path)],
+                    text: 'Documento do MS ScanNow'));
+              } catch (_) {
+                messenger.showSnackBar(const SnackBar(
+                    content: Text('Não foi possível partilhar o documento.')));
+              }
+            },
           ),
         ],
       ),
@@ -371,7 +413,7 @@ class _ActionTile extends StatelessWidget {
           width: 36,
           height: 36,
           decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
+              color: color.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(10)),
           child: Icon(icon, color: color, size: 18),
         ),

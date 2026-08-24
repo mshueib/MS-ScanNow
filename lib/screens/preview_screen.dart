@@ -1,14 +1,16 @@
 import 'dart:io';
-import 'dart:typed_data';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import '../services/ocr_service.dart';
+import '../services/pdf_service.dart';
 import '../services/storage_service.dart';
 import '../models/document_model.dart';
 import 'signature_screen.dart';
@@ -49,7 +51,11 @@ class _PreviewScreenState extends State<PreviewScreen> {
   Uint8List? _signatureBytes;
 
   final PageController _pageCtrl = PageController();
-  int _currentPage = 0;
+  // Notifier em vez de setState — o indicador de página (dots) e o OCR
+  // precisam de saber a página actual, mas trocar de página não deve
+  // reconstruir o ecrã inteiro (carrossel, painel de acções, etc.).
+  final ValueNotifier<int> _currentPageNotifier = ValueNotifier(0);
+  int get _currentPageIndex => _currentPageNotifier.value;
   IdLayout _idLayout = IdLayout.sideBySide; // layout escolhido para BI
 
   /// Paths resolvidos prontos para usar (sem file:// URIs)
@@ -88,6 +94,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
   @override
   void dispose() {
     _pageCtrl.dispose();
+    _currentPageNotifier.dispose();
     super.dispose();
   }
 
@@ -140,13 +147,65 @@ class _PreviewScreenState extends State<PreviewScreen> {
       _ocrText = '';
     });
     try {
-      final text = await OCRService.extractText(_resolvedPaths[_currentPage]);
+      final text =
+          await OCRService.extractText(_resolvedPaths[_currentPageIndex]);
       if (!mounted) return;
       setState(() => _ocrText = text);
     } catch (e) {
+      if (kDebugMode) debugPrint('Erro OCR: $e');
       if (!mounted) return;
-      _showSnack('Erro ao extrair texto: $e');
+      _showSnack('Não foi possível extrair texto desta imagem.');
     } finally {
+      if (mounted) setState(() => _isLoadingOcr = false);
+    }
+  }
+
+  /// OCR para o modo BI/ID — extrai texto de frente e verso (não só da
+  /// página em exibição) e junta os dois resultados, identificados por lado.
+  /// Quando as imagens vêm de um PDF direto do ML Kit (Samsung), extrai
+  /// primeiro o JPEG/PNG embedded, tal como já é feito para gerar o PDF.
+  Future<void> _runOcrId() async {
+    if (_resolvedPaths.isEmpty) return;
+    setState(() {
+      _isLoadingOcr = true;
+      _ocrText = '';
+    });
+    const labels = ['Frente', 'Verso'];
+    final tmpFiles = <File>[];
+    try {
+      final parts = <String>[];
+      for (int i = 0; i < _resolvedPaths.length; i++) {
+        String ocrPath = _resolvedPaths[i];
+        if (widget.isPdfDirect) {
+          final bytes = await File(_resolvedPaths[i]).readAsBytes();
+          final extracted = await _extractImageFromPdf(bytes);
+          if (extracted == null) continue;
+          final tmp = await _writeTempImage(extracted);
+          tmpFiles.add(tmp);
+          ocrPath = tmp.path;
+        }
+        final label = i < labels.length ? labels[i] : 'Página ${i + 1}';
+        String text;
+        try {
+          text = await OCRService.extractText(ocrPath);
+        } catch (e) {
+          text = 'Não foi possível ler texto desta face.';
+        }
+        parts.add('$label:\n$text');
+      }
+      if (!mounted) return;
+      setState(() => _ocrText = parts.join('\n\n'));
+      if (parts.isEmpty) _showSnack('Não foi possível extrair texto do BI/ID.');
+    } catch (e) {
+      if (kDebugMode) debugPrint('Erro OCR BI/ID: $e');
+      if (!mounted) return;
+      _showSnack('Não foi possível extrair texto do BI/ID.');
+    } finally {
+      for (final t in tmpFiles) {
+        try {
+          await t.delete();
+        } catch (_) {}
+      }
       if (mounted) setState(() => _isLoadingOcr = false);
     }
   }
@@ -183,33 +242,8 @@ class _PreviewScreenState extends State<PreviewScreen> {
       for (final path in pathsForPdf) {
         final f = File(path);
         if (!await f.exists()) continue;
-        final bytes = await f.readAsBytes();
-        final image = pw.MemoryImage(bytes);
-        if (_signatureBytes != null) {
-          final sig = pw.MemoryImage(_signatureBytes!);
-          pdf.addPage(pw.Page(
-            pageFormat: PdfPageFormat.a4,
-            build: (_) => pw.Stack(children: [
-              pw.Positioned.fill(
-                  child: pw.Image(image, fit: pw.BoxFit.contain)),
-              pw.Positioned(
-                  bottom: 20,
-                  right: 20,
-                  child: pw.Container(
-                    width: 160,
-                    height: 60,
-                    decoration: pw.BoxDecoration(
-                      border:
-                          pw.Border.all(color: PdfColors.grey400, width: 0.5),
-                      color: PdfColors.white,
-                    ),
-                    child: pw.Center(child: pw.Image(sig)),
-                  )),
-            ]),
-          ));
-        } else {
-          pdf.addPage(pw.Page(build: (_) => pw.Center(child: pw.Image(image))));
-        }
+        final bytes = await compute(PDFService.compressImage, path);
+        await _addImagePage(pdf, renderBytes: bytes, ocrPath: path);
       }
 
       final saved = await _savePdfBytes(await pdf.save());
@@ -217,53 +251,180 @@ class _PreviewScreenState extends State<PreviewScreen> {
       setState(() => _generatedPdf = saved);
       _showSnack('PDF guardado com sucesso!');
     } catch (e) {
+      if (kDebugMode) debugPrint('Erro _generatePDF: $e');
       if (!mounted) return;
-      _showSnack('Erro ao gerar PDF: $e');
+      _showSnack('Não foi possível gerar o PDF. Tente novamente.');
     } finally {
       if (mounted) setState(() => _isGeneratingPdf = false);
     }
+  }
+
+  // ─── Camada de texto pesquisável (OCR-to-PDF) ─────────────────────────────
+  //
+  // Adiciona uma página com a imagem e, sempre que o OCR tiver sucesso, uma
+  // camada de texto invisível sobreposta alinhada às linhas detectadas —
+  // é o que torna o PDF pesquisável/selecionável nos leitores ("sandwich
+  // PDF"), sem alterar a aparência visual do documento.
+  Future<void> _addImagePage(
+    pw.Document pdf, {
+    required Uint8List renderBytes,
+    required String ocrPath,
+  }) async {
+    final image = pw.MemoryImage(renderBytes);
+
+    RecognizedText? recognized;
+    Size? origSize;
+    try {
+      recognized = await OCRService.recognize(ocrPath);
+      origSize = await _decodeImageSize(await File(ocrPath).readAsBytes());
+    } catch (e) {
+      if (kDebugMode) debugPrint('OCR indisponível ao gerar PDF: $e');
+    }
+
+    final sig =
+        _signatureBytes != null ? pw.MemoryImage(_signatureBytes!) : null;
+
+    pdf.addPage(pw.Page(
+      pageFormat: PdfPageFormat.a4,
+      margin: const pw.EdgeInsets.all(16),
+      build: (ctx) {
+        final aW = ctx.page.pageFormat.availableWidth;
+        final aH = ctx.page.pageFormat.availableHeight;
+        final imgW = (image.width ?? 1).toDouble();
+        final imgH = (image.height ?? 1).toDouble();
+        final rect = _containRect(aW, aH, imgW, imgH);
+
+        return pw.Stack(children: [
+          pw.Positioned(
+            left: rect.x,
+            top: rect.y,
+            child: pw.SizedBox(
+              width: rect.w,
+              height: rect.h,
+              child: pw.Image(image, fit: pw.BoxFit.fill),
+            ),
+          ),
+          if (recognized != null && origSize != null)
+            ..._ocrOverlay(
+              recognized,
+              imageSize: origSize,
+              drawX: rect.x,
+              drawY: rect.y,
+              drawW: rect.w,
+              drawH: rect.h,
+            ),
+          if (sig != null)
+            pw.Positioned(
+              bottom: 0,
+              right: 0,
+              child: pw.Container(
+                width: 160,
+                height: 60,
+                decoration: pw.BoxDecoration(
+                  border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                  color: PdfColors.white,
+                ),
+                child: pw.Center(child: pw.Image(sig)),
+              ),
+            ),
+        ]);
+      },
+    ));
+  }
+
+  /// Calcula o retângulo (x, y, largura, altura) que a imagem ocupa quando
+  /// desenhada dentro de uma área de [boxW]x[boxH] preservando a proporção
+  /// (equivalente a BoxFit.contain, mas calculado à mão para podermos
+  /// alinhar a camada de texto invisível ao mesmo retângulo).
+  ({double x, double y, double w, double h}) _containRect(
+      double boxW, double boxH, double imgW, double imgH) {
+    final scale = math.min(boxW / imgW, boxH / imgH);
+    final w = imgW * scale;
+    final h = imgH * scale;
+    return (x: (boxW - w) / 2, y: (boxH - h) / 2, w: w, h: h);
+  }
+
+  Future<Size> _decodeImageSize(Uint8List bytes) async {
+    final codec = await ui.instantiateImageCodec(bytes);
+    final frame = await codec.getNextFrame();
+    final size =
+        Size(frame.image.width.toDouble(), frame.image.height.toDouble());
+    frame.image.dispose();
+    return size;
+  }
+
+  /// Gera os widgets de texto invisível alinhados às linhas detectadas pelo
+  /// OCR, convertendo as coordenadas em pixels da imagem original
+  /// ([imageSize]) para o retângulo onde a imagem foi desenhada na página
+  /// PDF ([drawX]/[drawY]/[drawW]/[drawH]).
+  List<pw.Widget> _ocrOverlay(
+    RecognizedText recognized, {
+    required Size imageSize,
+    required double drawX,
+    required double drawY,
+    required double drawW,
+    required double drawH,
+  }) {
+    if (imageSize.width == 0 || imageSize.height == 0) return const [];
+    final widgets = <pw.Widget>[];
+    for (final block in recognized.blocks) {
+      for (final line in block.lines) {
+        if (line.text.trim().isEmpty) continue;
+        final box = line.boundingBox;
+        widgets.add(pw.Positioned(
+          left: drawX + (box.left / imageSize.width) * drawW,
+          top: drawY + (box.top / imageSize.height) * drawH,
+          child: pw.SizedBox(
+            width: (box.width / imageSize.width) * drawW,
+            height: (box.height / imageSize.height) * drawH,
+            child: pw.FittedBox(
+              fit: pw.BoxFit.fill,
+              child: pw.Text(
+                line.text,
+                maxLines: 1,
+                softWrap: false,
+                style: const pw.TextStyle(
+                  fontSize: 100,
+                  color: PdfColors.black,
+                  renderingMode: PdfTextRenderingMode.invisible,
+                ),
+              ),
+            ),
+          ),
+        ));
+      }
+    }
+    return widgets;
   }
 
   // ─── Guardar PDF directo (modo isPdfDirect) ───────────────────────────────
 
   Future<void> _savePdfDirect() async {
     setState(() => _isGeneratingPdf = true);
+    File? tmpOcrFile;
     try {
       final sourcePath = _resolvedPaths.first;
-      final List<int> pdfBytes;
+      final srcBytes = await File(sourcePath).readAsBytes();
+      // Extrai o JPEG/PNG embedded no PDF do ML Kit — necessário para poder
+      // desenhar a assinatura e a camada de OCR sobre o conteúdo real.
+      final extractedImg = await _extractImageFromPdf(srcBytes);
 
-      if (_signatureBytes != null) {
-        // Adiciona assinatura como nova página de rodapé
+      final List<int> pdfBytes;
+      if (extractedImg != null) {
+        final compressed =
+            await compute(PDFService.compressBytes, extractedImg);
+        tmpOcrFile = await _writeTempImage(extractedImg);
         final pdf = pw.Document();
-        final srcBytes = await File(sourcePath).readAsBytes();
-        final sig = pw.MemoryImage(_signatureBytes!);
-        // Página com imagem thumbnail do PDF + assinatura
-        pdf.addPage(pw.Page(
-          pageFormat: PdfPageFormat.a4,
-          build: (_) => pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
-            children: [
-              pw.Expanded(
-                  child: pw.Center(
-                      child: pw.Text('Documento digitalizado',
-                          style: const pw.TextStyle(fontSize: 18)))),
-              pw.Container(
-                alignment: pw.Alignment.centerRight,
-                child: pw.Container(
-                  width: 200,
-                  height: 80,
-                  decoration: pw.BoxDecoration(
-                    border: pw.Border.all(color: PdfColors.grey400),
-                  ),
-                  child: pw.Center(child: pw.Image(sig)),
-                ),
-              ),
-            ],
-          ),
-        ));
+        await _addImagePage(pdf,
+            renderBytes: compressed, ocrPath: tmpOcrFile.path);
         pdfBytes = await pdf.save();
       } else {
-        pdfBytes = await File(sourcePath).readAsBytes();
+        // Não foi possível extrair a imagem — mantém o PDF tal como veio do
+        // scanner nativo (sem camada de OCR nem assinatura).
+        pdfBytes = srcBytes;
+        if (_signatureBytes != null) {
+          _showSnack('Não foi possível aplicar a assinatura a este PDF.');
+        }
       }
 
       final saved = await _savePdfBytes(pdfBytes);
@@ -271,11 +432,27 @@ class _PreviewScreenState extends State<PreviewScreen> {
       setState(() => _generatedPdf = saved);
       _showSnack('PDF guardado com sucesso!');
     } catch (e) {
+      if (kDebugMode) debugPrint('Erro _savePdfDirect: $e');
       if (!mounted) return;
-      _showSnack('Erro ao guardar: $e');
+      _showSnack('Não foi possível guardar o PDF. Tente novamente.');
     } finally {
+      if (tmpOcrFile != null) {
+        try {
+          await tmpOcrFile.delete();
+        } catch (_) {}
+      }
       if (mounted) setState(() => _isGeneratingPdf = false);
     }
+  }
+
+  /// Escreve bytes de imagem num ficheiro temporário — o ML Kit só aceita
+  /// caminhos de ficheiro (`InputImage.fromFilePath`), não bytes em memória.
+  Future<File> _writeTempImage(Uint8List bytes) async {
+    final dir = await getTemporaryDirectory();
+    final file =
+        File('${dir.path}/ocr_${DateTime.now().microsecondsSinceEpoch}.jpg');
+    await file.writeAsBytes(bytes);
+    return file;
   }
 
   Future<File> _savePdfBytes(List<int> bytes) async {
@@ -285,7 +462,15 @@ class _PreviewScreenState extends State<PreviewScreen> {
         ? 'BI_${now.day}_${_months[now.month - 1]}_${now.year}'
         : 'Documento ${now.day} ${_months[now.month - 1]} ${now.year}, '
             '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
-    final dest = File('${dir.path}/scan_${now.millisecondsSinceEpoch}.pdf');
+    // Nome de ficheiro em disco legível (em vez de epoch em milissegundos),
+    // com segundos para evitar colisões entre gerações próximas.
+    final datePart = '${now.year}-${now.month.toString().padLeft(2, '0')}-'
+        '${now.day.toString().padLeft(2, '0')}';
+    final timePart = '${now.hour.toString().padLeft(2, '0')}h'
+        '${now.minute.toString().padLeft(2, '0')}m'
+        '${now.second.toString().padLeft(2, '0')}';
+    final filePrefix = widget.idMode ? 'BI' : 'Documento';
+    final dest = File('${dir.path}/${filePrefix}_${datePart}_$timePart.pdf');
     await dest.writeAsBytes(bytes);
     await StorageService.saveDocument(
         DocumentModel(name: name, path: dest.path, type: 'pdf', date: now));
@@ -344,8 +529,9 @@ class _PreviewScreenState extends State<PreviewScreen> {
 
   Future<void> _share() async {
     if (_generatedPdf == null) return;
-    await Share.shareXFiles([XFile(_generatedPdf!.path)],
-        text: 'Documento digitalizado com MS ScanNow');
+    await SharePlus.instance.share(ShareParams(
+        files: [XFile(_generatedPdf!.path)],
+        text: 'Documento digitalizado com MS ScanNow'));
   }
 
   void _showSnack(String msg) {
@@ -354,10 +540,52 @@ class _PreviewScreenState extends State<PreviewScreen> {
         SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating));
   }
 
+  // ─── Sair sem guardar ─────────────────────────────────────────────────────
+
+  /// Só há algo a perder se já existem páginas capturadas e o PDF ainda não
+  /// foi guardado — caso contrário sair é sempre seguro.
+  bool get _canLeaveWithoutConfirmation =>
+      _generatedPdf != null || (_resolvedPaths.isEmpty && widget.paths.isEmpty);
+
+  Future<bool> _confirmDiscard() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Sair sem guardar?'),
+        content: const Text(
+            'O PDF ainda não foi guardado. Se sair agora, a digitalização será perdida.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Continuar aqui')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: _kRed),
+            child: const Text('Sair sem guardar'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
   // ─── Build ────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
+    return PopScope(
+      canPop: _canLeaveWithoutConfirmation,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        final confirmed = await _confirmDiscard();
+        if (!confirmed || !context.mounted) return;
+        Navigator.of(context).pop();
+      },
+      child: _buildScaffold(),
+    );
+  }
+
+  Widget _buildScaffold() {
     // Modo PDF directo: usa SfPdfViewer
     if (widget.isPdfDirect) return _buildDirectPdfScaffold();
 
@@ -500,6 +728,28 @@ class _PreviewScreenState extends State<PreviewScreen> {
                   Row(children: [
                     Expanded(
                       child: OutlinedButton.icon(
+                        onPressed: _isLoadingOcr ? null : _runOcrId,
+                        icon: _isLoadingOcr
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: _kBlue))
+                            : const Icon(Icons.text_fields, size: 18),
+                        label: Text(_isLoadingOcr ? 'A extrair...' : 'OCR'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _kBlue,
+                          side:
+                              BorderSide(color: _kBlue.withValues(alpha: 0.5)),
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
                         onPressed: _addSignature,
                         icon: Icon(
                             _signatureBytes != null
@@ -510,39 +760,40 @@ class _PreviewScreenState extends State<PreviewScreen> {
                             _signatureBytes != null ? 'Assinado' : 'Assinar'),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: _kGreen,
-                          side: BorderSide(color: _kGreen.withOpacity(0.5)),
+                          side:
+                              BorderSide(color: _kGreen.withValues(alpha: 0.5)),
                           padding: const EdgeInsets.symmetric(vertical: 13),
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12)),
                         ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      flex: 2,
-                      child: FilledButton.icon(
-                        onPressed: _isGeneratingPdf ? null : _savePdfBi,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _kBlue,
-                          padding: const EdgeInsets.symmetric(vertical: 13),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                        ),
-                        icon: _isGeneratingPdf
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Colors.white))
-                            : const Icon(Icons.save_alt),
-                        label: Text(_isGeneratingPdf
-                            ? 'A gerar PDF...'
-                            : _generatedPdf != null
-                                ? 'Guardado ✓'
-                                : 'Guardar PDF'),
                       ),
                     ),
                   ]),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _isGeneratingPdf ? null : _savePdfBi,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _kBlue,
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                      icon: _isGeneratingPdf
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.save_alt),
+                      label: Text(_isGeneratingPdf
+                          ? 'A gerar PDF...'
+                          : _generatedPdf != null
+                              ? 'Guardado ✓'
+                              : 'Guardar PDF'),
+                    ),
+                  ),
                   if (_generatedPdf != null) ...[
                     const SizedBox(height: 8),
                     SizedBox(
@@ -553,11 +804,29 @@ class _PreviewScreenState extends State<PreviewScreen> {
                         label: const Text('Partilhar PDF'),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: _kRed,
-                          side: BorderSide(color: _kRed.withOpacity(0.5)),
+                          side: BorderSide(color: _kRed.withValues(alpha: 0.5)),
                           padding: const EdgeInsets.symmetric(vertical: 13),
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12)),
                         ),
+                      ),
+                    ),
+                  ],
+                  if (_ocrText.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      constraints: const BoxConstraints(maxHeight: 160),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF0F2F5),
+                        borderRadius: BorderRadius.circular(10),
+                        border:
+                            Border.all(color: _kBlue.withValues(alpha: 0.2)),
+                      ),
+                      child: SingleChildScrollView(
+                        child: SelectableText(_ocrText,
+                            style: const TextStyle(fontSize: 13, height: 1.6)),
                       ),
                     ),
                   ],
@@ -597,10 +866,13 @@ class _PreviewScreenState extends State<PreviewScreen> {
         if (pdfBytes[i] == 0xFF &&
             pdfBytes[i + 1] == 0xD8 &&
             pdfBytes[i + 2] == 0xFF) {
-          // Encontrou início de JPEG — procurar o fim (EOI marker: FF D9)
-          for (int j = pdfBytes.length - 1; j > i + 2; j--) {
-            if (pdfBytes[j] == 0xD9 && pdfBytes[j - 1] == 0xFF) {
-              return pdfBytes.sublist(i, j + 1);
+          // Encontrou início de JPEG — procurar o EOI (FF D9) a partir daqui
+          // para a frente. Procurar a partir do fim do ficheiro (como antes)
+          // apanhava a ÚLTIMA ocorrência em todo o PDF, que pode estar depois
+          // do trailer/xref e incluir lixo binário no JPEG extraído.
+          for (int j = i + 2; j < pdfBytes.length - 1; j++) {
+            if (pdfBytes[j] == 0xFF && pdfBytes[j + 1] == 0xD9) {
+              return pdfBytes.sublist(i, j + 2);
             }
           }
           // Sem EOI encontrado — pegar tudo até ao fim
@@ -629,17 +901,21 @@ class _PreviewScreenState extends State<PreviewScreen> {
     return null;
   }
 
-  /// Gera o PDF final combinando frente e verso numa só página.
-  /// Para PDFs Samsung: extrai a imagem embedded antes de incluir.
+  /// Gera o PDF final combinando frente e verso numa só página, com camada
+  /// de OCR pesquisável por lado. Para PDFs Samsung: extrai a imagem
+  /// embedded de cada scan antes de incluir.
   Future<void> _mergePdfsDirect() async {
     if (_resolvedPaths.isEmpty) return;
     setState(() => _isGeneratingPdf = true);
+    const labels = ['Frente', 'Verso'];
+    final tmpFiles = <File>[];
     try {
-      final pw.ImageProvider? sig =
-          _signatureBytes != null ? pw.MemoryImage(_signatureBytes!) : null;
-      const labels = ['Frente', 'Verso'];
-
-      final List<MapEntry<int, Uint8List>> pageImages = [];
+      final items = <({
+        String label,
+        pw.MemoryImage image,
+        Size origSize,
+        RecognizedText? recognized
+      })>[];
 
       for (int i = 0; i < _resolvedPaths.length; i++) {
         final f = File(_resolvedPaths[i]);
@@ -652,103 +928,164 @@ class _PreviewScreenState extends State<PreviewScreen> {
             bytes[2] == 0x44 &&
             bytes[3] == 0x46;
 
-        if (isPdf) {
-          // Tentar extrair imagem embedded no PDF
-          final extracted = await _extractImageFromPdf(bytes);
-          if (extracted != null) {
-            pageImages.add(MapEntry(i, extracted));
-          }
-          // Se não encontrar imagem, ignorar (melhor que mostrar texto)
-        } else {
-          pageImages.add(MapEntry(i, bytes));
+        final Uint8List? rawImage =
+            isPdf ? await _extractImageFromPdf(bytes) : bytes;
+        if (rawImage == null)
+          continue; // não conseguiu extrair — ignora este lado
+
+        final compressed = await compute(PDFService.compressBytes, rawImage);
+        final origSize = await _decodeImageSize(rawImage);
+
+        RecognizedText? recognized;
+        try {
+          final tmp = await _writeTempImage(rawImage);
+          tmpFiles.add(tmp);
+          recognized = await OCRService.recognize(tmp.path);
+        } catch (e) {
+          if (kDebugMode) debugPrint('OCR indisponível (BI lado $i): $e');
         }
+
+        items.add((
+          label: i < labels.length ? labels[i] : '',
+          image: pw.MemoryImage(compressed),
+          origSize: origSize,
+          recognized: recognized,
+        ));
       }
 
-      if (pageImages.isEmpty) {
+      if (items.isEmpty) {
         _showSnack('Não foi possível extrair as imagens dos PDFs.');
         return;
       }
+      final failedCount = _resolvedPaths.length - items.length;
+
+      final sig =
+          _signatureBytes != null ? pw.MemoryImage(_signatureBytes!) : null;
+      final isLandscape = _idLayout == IdLayout.sideBySide && items.length >= 2;
 
       final output = pw.Document();
-      final imgs = pageImages.map((e) => pw.MemoryImage(e.value)).toList();
-      final idxs = pageImages.map((e) => e.key).toList();
-      final isLandscape = _idLayout == IdLayout.sideBySide && imgs.length >= 2;
-
       output.addPage(pw.Page(
         pageFormat: isLandscape ? PdfPageFormat.a4.landscape : PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(16),
         build: (ctx) {
-          final aW = ctx.page.pageFormat.availableWidth;
-          final aH =
-              ctx.page.pageFormat.availableHeight - (sig != null ? 72.0 : 0.0);
+          final aWFull = ctx.page.pageFormat.availableWidth;
+          final aHFull = ctx.page.pageFormat.availableHeight;
+          const labelH = 14.0;
+          const gap = 12.0;
+          const sigReserve = 72.0;
+          final aH = aHFull - (sig != null ? sigReserve : 0.0);
+
+          final widgets = <pw.Widget>[];
 
           if (isLandscape) {
-            final iW = (aW - 12.0 * (imgs.length - 1)) / imgs.length;
-            return pw.Column(children: [
-              pw.Row(children: [
-                for (int j = 0; j < imgs.length; j++) ...[
-                  pw.Container(
-                    width: iW,
-                    height: aH,
-                    child: pw.Image(imgs[j], fit: pw.BoxFit.contain),
-                  ),
-                  if (j < imgs.length - 1) pw.SizedBox(width: 12),
-                ],
-              ]),
-              if (sig != null) ...[
-                pw.SizedBox(height: 8),
-                pw.Align(
-                  alignment: pw.Alignment.centerRight,
-                  child: pw.Container(
-                    width: 160,
-                    height: 56,
-                    decoration: pw.BoxDecoration(
-                        border: pw.Border.all(
-                            color: PdfColors.grey400, width: 0.5)),
-                    child: pw.Center(child: pw.Image(sig)),
-                  ),
+            final slotW = (aWFull - gap * (items.length - 1)) / items.length;
+            double slotX = 0;
+            for (final item in items) {
+              widgets.add(pw.Positioned(
+                left: slotX,
+                top: 0,
+                child: pw.Text(item.label,
+                    style: const pw.TextStyle(
+                        fontSize: 9, color: PdfColors.grey700)),
+              ));
+              final imgW = (item.image.width ?? 1).toDouble();
+              final imgH = (item.image.height ?? 1).toDouble();
+              final rect = _containRect(slotW, aH - labelH, imgW, imgH);
+              final drawX = slotX + rect.x;
+              final drawY = labelH + rect.y;
+              widgets.add(pw.Positioned(
+                left: drawX,
+                top: drawY,
+                child: pw.SizedBox(
+                  width: rect.w,
+                  height: rect.h,
+                  child: pw.Image(item.image, fit: pw.BoxFit.fill),
                 ),
-              ],
-            ]);
+              ));
+              if (item.recognized != null) {
+                widgets.addAll(_ocrOverlay(item.recognized!,
+                    imageSize: item.origSize,
+                    drawX: drawX,
+                    drawY: drawY,
+                    drawW: rect.w,
+                    drawH: rect.h));
+              }
+              slotX += slotW + gap;
+            }
           } else {
-            final iH = (aH - 12.0 * (imgs.length - 1)) / imgs.length;
-            return pw.Column(children: [
-              for (int j = 0; j < imgs.length; j++) ...[
-                pw.Container(
-                  width: double.infinity,
-                  height: iH,
-                  child: pw.Image(imgs[j], fit: pw.BoxFit.contain),
+            final slotH = (aH - gap * (items.length - 1)) / items.length;
+            double slotY = 0;
+            for (final item in items) {
+              widgets.add(pw.Positioned(
+                left: 0,
+                top: slotY,
+                child: pw.Text(item.label,
+                    style: const pw.TextStyle(
+                        fontSize: 9, color: PdfColors.grey700)),
+              ));
+              final imgW = (item.image.width ?? 1).toDouble();
+              final imgH = (item.image.height ?? 1).toDouble();
+              final rect = _containRect(aWFull, slotH - labelH, imgW, imgH);
+              final drawX = rect.x;
+              final drawY = slotY + labelH + rect.y;
+              widgets.add(pw.Positioned(
+                left: drawX,
+                top: drawY,
+                child: pw.SizedBox(
+                  width: rect.w,
+                  height: rect.h,
+                  child: pw.Image(item.image, fit: pw.BoxFit.fill),
                 ),
-                if (j < imgs.length - 1) pw.SizedBox(height: 12),
-              ],
-              if (sig != null) ...[
-                pw.SizedBox(height: 8),
-                pw.Align(
-                  alignment: pw.Alignment.centerRight,
-                  child: pw.Container(
-                    width: 160,
-                    height: 56,
-                    decoration: pw.BoxDecoration(
-                        border: pw.Border.all(
-                            color: PdfColors.grey400, width: 0.5)),
-                    child: pw.Center(child: pw.Image(sig)),
-                  ),
-                ),
-              ],
-            ]);
+              ));
+              if (item.recognized != null) {
+                widgets.addAll(_ocrOverlay(item.recognized!,
+                    imageSize: item.origSize,
+                    drawX: drawX,
+                    drawY: drawY,
+                    drawW: rect.w,
+                    drawH: rect.h));
+              }
+              slotY += slotH + gap;
+            }
           }
+
+          if (sig != null) {
+            widgets.add(pw.Positioned(
+              left: aWFull - 160,
+              top: aH + 8,
+              child: pw.SizedBox(
+                width: 160,
+                height: 56,
+                child: pw.Container(
+                  decoration: pw.BoxDecoration(
+                      border:
+                          pw.Border.all(color: PdfColors.grey400, width: 0.5)),
+                  child: pw.Center(child: pw.Image(sig)),
+                ),
+              ),
+            ));
+          }
+
+          return pw.Stack(children: widgets);
         },
       ));
 
       final saved = await _savePdfBytes(await output.save());
       if (!mounted) return;
       setState(() => _generatedPdf = saved);
-      _showSnack('PDF do BI guardado!');
+      _showSnack(failedCount > 0
+          ? 'PDF do BI guardado — não foi possível ler ${failedCount == 1 ? "um dos lados" : "$failedCount lados"}.'
+          : 'PDF do BI guardado!');
     } catch (e, s) {
-      debugPrint('Erro _mergePdfsDirect: $e\n$s');
+      if (kDebugMode) debugPrint('Erro _mergePdfsDirect: $e\n$s');
       if (!mounted) return;
-      _showSnack('Erro ao gerar PDF: $e');
+      _showSnack('Não foi possível gerar o PDF do BI. Tente novamente.');
     } finally {
+      for (final t in tmpFiles) {
+        try {
+          await t.delete();
+        } catch (_) {}
+      }
       if (mounted) setState(() => _isGeneratingPdf = false);
     }
   }
@@ -781,11 +1118,23 @@ class _PreviewScreenState extends State<PreviewScreen> {
         children: [
           // Viewer PDF
           Expanded(
-            child: SfPdfViewer.file(
-              File(pdfPath),
-              onDocumentLoadFailed: (d) =>
-                  _showSnack('Erro ao abrir PDF: ${d.description}'),
-            ),
+            child: File(pdfPath).existsSync()
+                ? SfPdfViewer.file(
+                    File(pdfPath),
+                    onDocumentLoadFailed: (d) =>
+                        _showSnack('Erro ao abrir PDF: ${d.description}'),
+                  )
+                : const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.picture_as_pdf_outlined,
+                            size: 56, color: Colors.grey),
+                        SizedBox(height: 8),
+                        Text('Não foi possível encontrar o ficheiro PDF.'),
+                      ],
+                    ),
+                  ),
           ),
 
           // Painel inferior COM SafeArea
@@ -806,7 +1155,8 @@ class _PreviewScreenState extends State<PreviewScreen> {
                       decoration: BoxDecoration(
                         color: const Color(0xFFE6F4EA),
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: _kGreen.withOpacity(0.3)),
+                        border:
+                            Border.all(color: _kGreen.withValues(alpha: 0.3)),
                       ),
                       child: Row(children: [
                         const Icon(Icons.draw, color: _kGreen, size: 16),
@@ -838,7 +1188,8 @@ class _PreviewScreenState extends State<PreviewScreen> {
                         ),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: _kGreen,
-                          side: BorderSide(color: _kGreen.withOpacity(0.5)),
+                          side:
+                              BorderSide(color: _kGreen.withValues(alpha: 0.5)),
                           padding: const EdgeInsets.symmetric(vertical: 13),
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12)),
@@ -885,7 +1236,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
                         label: const Text('Partilhar PDF'),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: _kRed,
-                          side: BorderSide(color: _kRed.withOpacity(0.5)),
+                          side: BorderSide(color: _kRed.withValues(alpha: 0.5)),
                           padding: const EdgeInsets.symmetric(vertical: 13),
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12)),
@@ -907,13 +1258,19 @@ class _PreviewScreenState extends State<PreviewScreen> {
   Widget _buildImageCarousel() {
     if (widget.idMode) return _buildIdPreview();
 
+    // A imagem nunca é mostrada maior que a largura do ecrã (BoxFit.contain)
+    // — descodificar ao tamanho real da câmara (ex.: 4000px) é desperdício.
+    final cacheWidth = (MediaQuery.sizeOf(context).width *
+            MediaQuery.devicePixelRatioOf(context))
+        .round();
+
     return Column(
       children: [
         Expanded(
           child: PageView.builder(
             controller: _pageCtrl,
             itemCount: _resolvedPaths.length,
-            onPageChanged: (i) => setState(() => _currentPage = i),
+            onPageChanged: (i) => _currentPageNotifier.value = i,
             itemBuilder: (_, i) {
               final f = File(_resolvedPaths[i]);
               return Padding(
@@ -921,7 +1278,8 @@ class _PreviewScreenState extends State<PreviewScreen> {
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: f.existsSync()
-                      ? Image.file(f, fit: BoxFit.contain)
+                      ? Image.file(f,
+                          fit: BoxFit.contain, cacheWidth: cacheWidth)
                       : const Center(
                           child: Icon(Icons.broken_image_outlined,
                               size: 64, color: Colors.grey)),
@@ -931,21 +1289,23 @@ class _PreviewScreenState extends State<PreviewScreen> {
           ),
         ),
         if (_resolvedPaths.length > 1)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(
-                _resolvedPaths.length,
-                (i) => Container(
-                      width: i == _currentPage ? 16 : 6,
-                      height: 6,
-                      margin: const EdgeInsets.symmetric(
-                          horizontal: 3, vertical: 8),
-                      decoration: BoxDecoration(
-                        color:
-                            i == _currentPage ? _kBlue : Colors.grey.shade300,
-                        borderRadius: BorderRadius.circular(3),
-                      ),
-                    )),
+          ValueListenableBuilder<int>(
+            valueListenable: _currentPageNotifier,
+            builder: (_, current, __) => Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(
+                  _resolvedPaths.length,
+                  (i) => Container(
+                        width: i == current ? 16 : 6,
+                        height: 6,
+                        margin: const EdgeInsets.symmetric(
+                            horizontal: 3, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: i == current ? _kBlue : Colors.grey.shade300,
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                      )),
+            ),
           ),
         if (_signatureBytes != null)
           Container(
@@ -954,7 +1314,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
             decoration: BoxDecoration(
               color: const Color(0xFFE6F4EA),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: _kGreen.withOpacity(0.3)),
+              border: Border.all(color: _kGreen.withValues(alpha: 0.3)),
             ),
             child: Row(children: [
               const Icon(Icons.draw, color: _kGreen, size: 16),
@@ -973,6 +1333,11 @@ class _PreviewScreenState extends State<PreviewScreen> {
   }
 
   Widget _buildIdPreview() {
+    // Cada lado ocupa ~metade da largura do ecrã (Row com 2 Expanded).
+    final cacheWidth = (MediaQuery.sizeOf(context).width *
+            MediaQuery.devicePixelRatioOf(context) /
+            2)
+        .round();
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Row(
@@ -983,7 +1348,8 @@ class _PreviewScreenState extends State<PreviewScreen> {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(10),
                 child: File(_resolvedPaths[i]).existsSync()
-                    ? Image.file(File(_resolvedPaths[i]), fit: BoxFit.cover)
+                    ? Image.file(File(_resolvedPaths[i]),
+                        fit: BoxFit.cover, cacheWidth: cacheWidth)
                     : const Center(
                         child: Icon(Icons.broken_image_outlined,
                             color: Colors.grey)),
@@ -1008,19 +1374,19 @@ class _PreviewScreenState extends State<PreviewScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Row(children: [
-              if (!widget.idMode) ...[
-                Expanded(
-                  child: _ActionBtn(
-                    icon: Icons.text_fields,
-                    label: _isLoadingOcr ? 'A extrair...' : 'OCR',
-                    loading: _isLoadingOcr,
-                    color: _kBlue,
-                    bg: const Color(0xFFE8F0FE),
-                    onTap: _isLoadingOcr ? null : _runOCR,
-                  ),
+              Expanded(
+                child: _ActionBtn(
+                  icon: Icons.text_fields,
+                  label: _isLoadingOcr ? 'A extrair...' : 'OCR',
+                  loading: _isLoadingOcr,
+                  color: _kBlue,
+                  bg: const Color(0xFFE8F0FE),
+                  onTap: _isLoadingOcr
+                      ? null
+                      : (widget.idMode ? _runOcrId : _runOCR),
                 ),
-                const SizedBox(width: 10),
-              ],
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 child: _ActionBtn(
                   icon: _signatureBytes != null
@@ -1081,7 +1447,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
                 decoration: BoxDecoration(
                   color: const Color(0xFFF0F2F5),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: _kBlue.withOpacity(0.2)),
+                  border: Border.all(color: _kBlue.withValues(alpha: 0.2)),
                 ),
                 child: SingleChildScrollView(
                   child: SelectableText(_ocrText,
@@ -1121,7 +1487,7 @@ class _ActionBtn extends StatelessWidget {
         decoration: BoxDecoration(
           color: bg,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: color.withOpacity(0.2), width: 0.5),
+          border: Border.all(color: color.withValues(alpha: 0.2), width: 0.5),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1166,7 +1532,7 @@ class _LayoutOption extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
         decoration: BoxDecoration(
           color: selected
-              ? const Color(0xFF1A73E8).withOpacity(0.1)
+              ? const Color(0xFF1A73E8).withValues(alpha: 0.1)
               : Colors.grey.shade100,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
@@ -1228,8 +1594,8 @@ class _IdPdfPreview extends StatelessWidget {
     Widget content;
     if (path == null || !File(path!).existsSync()) {
       content = Center(
-        child:
-            Icon(Icons.credit_card_outlined, size: 48, color: Colors.grey.shade400),
+        child: Icon(Icons.credit_card_outlined,
+            size: 48, color: Colors.grey.shade400),
       );
     } else if (_isPdf(path!)) {
       content = SfPdfViewer.file(
@@ -1238,7 +1604,12 @@ class _IdPdfPreview extends StatelessWidget {
         canShowScrollStatus: false,
       );
     } else {
-      content = Image.file(File(path!), fit: BoxFit.contain);
+      final cacheWidth = (MediaQuery.sizeOf(context).width *
+              MediaQuery.devicePixelRatioOf(context) /
+              2)
+          .round();
+      content =
+          Image.file(File(path!), fit: BoxFit.contain, cacheWidth: cacheWidth);
     }
 
     return ClipRRect(

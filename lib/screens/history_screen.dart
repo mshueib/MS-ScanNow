@@ -46,7 +46,7 @@ class HistoryScreen extends StatelessWidget {
                     size: 64,
                     color: Theme.of(
                       context,
-                    ).colorScheme.onSurface.withOpacity(0.2),
+                    ).colorScheme.onSurface.withValues(alpha: 0.2),
                   ),
                   const SizedBox(height: 12),
                   const Text(
@@ -60,7 +60,7 @@ class HistoryScreen extends StatelessWidget {
                       fontSize: 13,
                       color: Theme.of(
                         context,
-                      ).colorScheme.onSurface.withOpacity(0.5),
+                      ).colorScheme.onSurface.withValues(alpha: 0.5),
                     ),
                   ),
                 ],

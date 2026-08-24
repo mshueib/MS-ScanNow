@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_doc_scanner/flutter_doc_scanner.dart';
@@ -45,13 +46,14 @@ extension ScanModeExt on ScanMode {
 }
 
 class ScannerScreen extends StatefulWidget {
-  const ScannerScreen({super.key});
+  final ScanMode initialMode;
+  const ScannerScreen({super.key, this.initialMode = ScanMode.document});
   @override
   State<ScannerScreen> createState() => _ScannerScreenState();
 }
 
 class _ScannerScreenState extends State<ScannerScreen> {
-  ScanMode _mode = ScanMode.document;
+  late ScanMode _mode = widget.initialMode;
   bool _isCapturing = false;
   bool _mlKitFailed = false;
 
@@ -60,6 +62,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
   String? _idBack;
   bool _idFrontIsPdf = false;
   bool _idBackIsPdf = false;
+  // Qual lado a próxima captura no modo BI/ID deve preencher — definido
+  // explicitamente ao tocar num dos slots "Frente"/"Verso", para que cada
+  // toque abra a câmara diretamente para o lado certo (sem adivinhar).
+  bool _idTargetFront = true;
 
   final _picker = ImagePicker();
 
@@ -133,8 +139,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
   // ─── Captura principal ────────────────────────────────────────────────────
 
-  Future<void> _capture() async {
+  Future<void> _capture({bool? idFront}) async {
     if (_isCapturing) return;
+    if (idFront != null) _idTargetFront = idFront;
     if (!await _checkPermission()) return;
 
     setState(() => _isCapturing = true);
@@ -146,7 +153,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
       }
     } catch (e) {
       if (mounted) _showSnack('Erro ao capturar. Tente novamente.');
-      debugPrint('Scanner error: $e');
+      if (kDebugMode) debugPrint('Scanner error: $e');
     } finally {
       if (mounted) setState(() => _isCapturing = false);
     }
@@ -175,10 +182,12 @@ class _ScannerScreenState extends State<ScannerScreen> {
       if (!mounted) return;
       if (raw == null) return; // utilizador cancelou
 
-      debugPrint('ML Kit raw result type: ${raw.runtimeType} — $raw');
+      if (kDebugMode) {
+        debugPrint('ML Kit raw result type: ${raw.runtimeType} — $raw');
+      }
 
       final List<String> paths = _extractPaths(raw);
-      debugPrint('ML Kit paths extracted: $paths');
+      if (kDebugMode) debugPrint('ML Kit paths extracted: $paths');
 
       if (paths.isEmpty) return;
 
@@ -196,7 +205,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
       if (!mounted) return;
       _addResults(local);
     } catch (e) {
-      debugPrint('ML Kit falhou: $e');
+      if (kDebugMode) debugPrint('ML Kit falhou: $e');
       if (mounted) {
         setState(() => _mlKitFailed = true);
         _showSnack('Scanner avançado indisponível. A usar câmera normal.');
@@ -317,7 +326,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
         return dest;
       }
     } catch (e) {
-      debugPrint('Erro ao copiar PDF: $e');
+      if (kDebugMode) debugPrint('Erro ao copiar PDF: $e');
     }
     return uriOrPath;
   }
@@ -327,11 +336,13 @@ class _ScannerScreenState extends State<ScannerScreen> {
     if (!mounted) return;
     if (_mode == ScanMode.id) {
       setState(() {
-        if (_idFront == null) {
+        if (_idTargetFront) {
           _idFront = pdfPath;
           _idFrontIsPdf = true;
-          _showSnack('Frente capturada! Toque novamente para o verso.');
-        } else if (_idBack == null) {
+          _showSnack(_idBack == null
+              ? 'Frente capturada! Toque no verso para continuar.'
+              : 'Frente atualizada.');
+        } else {
           _idBack = pdfPath;
           _idBackIsPdf = true;
           _showSnack('Verso capturado! Toque em "Usar" para continuar.');
@@ -357,18 +368,16 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
     if (_mode == ScanMode.id) {
       setState(() {
-        if (_idFront == null) {
+        if (_idTargetFront) {
           _idFront = paths.first;
-          // Verso fica desbloqueado imediatamente
-          _showSnack('Frente capturada! Toque novamente para o verso.');
-        } else if (_idBack == null) {
-          _idBack = paths.first;
-          _showSnack('Verso capturado! Toque em "Usar" para continuar.');
+          _idFrontIsPdf = false;
+          _showSnack(_idBack == null
+              ? 'Frente capturada! Toque no verso para continuar.'
+              : 'Frente atualizada.');
         } else {
-          // Ambos já capturados — substitui o verso
           _idBack = paths.first;
           _idBackIsPdf = false;
-          _showSnack('Verso actualizado.');
+          _showSnack('Verso capturado! Toque em "Usar" para continuar.');
         }
       });
     } else {
@@ -419,6 +428,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
         _idBack = null;
         _idFrontIsPdf = false;
         _idBackIsPdf = false;
+        _idTargetFront = true;
       });
   void _removePage(int i) => setState(() => _pages.removeAt(i));
 
@@ -428,7 +438,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
       content: Text(msg),
       behavior: SnackBarBehavior.floating,
       action: action
-          ? const SnackBarAction(label: 'Definições', onPressed: openAppSettings)
+          ? const SnackBarAction(
+              label: 'Definições', onPressed: openAppSettings)
           : null,
     ));
   }
@@ -509,12 +520,12 @@ class _ScannerScreenState extends State<ScannerScreen> {
               decoration: BoxDecoration(
                 color: active
                     ? const Color(0xFF1A73E8)
-                    : Colors.white.withOpacity(0.08),
+                    : Colors.white.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
                   color: active
                       ? const Color(0xFF1A73E8)
-                      : Colors.white.withOpacity(0.15),
+                      : Colors.white.withValues(alpha: 0.15),
                   width: 0.5,
                 ),
               ),
@@ -558,7 +569,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
         Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(_mode.icon, size: 48, color: Colors.white.withOpacity(0.15)),
+            Icon(_mode.icon,
+                size: 48, color: Colors.white.withValues(alpha: 0.15)),
             const SizedBox(height: 12),
             Text(
               _mode == ScanMode.id
@@ -572,7 +584,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
                       : '${_pages.length} página(s) — toque em "Usar"',
               textAlign: TextAlign.center,
               style: TextStyle(
-                  color: Colors.white.withOpacity(0.45),
+                  color: Colors.white.withValues(alpha: 0.45),
                   fontSize: 13,
                   height: 1.5),
             ),
@@ -625,12 +637,14 @@ class _ScannerScreenState extends State<ScannerScreen> {
                 label: 'Frente',
                 path: _idFront,
                 captured: _idFront != null,
+                onTap: _isCapturing ? () {} : () => _capture(idFront: true),
                 locked: false), // frente nunca fica bloqueada
             const SizedBox(width: 10),
             _IdSlot(
                 label: 'Verso',
                 path: _idBack,
                 captured: _idBack != null,
+                onTap: _isCapturing ? () {} : () => _capture(idFront: false),
                 locked:
                     false), // verso também não bloqueia — apenas indica estado
           ]),
@@ -641,8 +655,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
                 : _idBack == null
                     ? 'Capture o verso (opcional)'
                     : 'Ambos os lados prontos — toque em "Usar"',
-            style:
-                TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 10),
+            style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.35), fontSize: 10),
           ),
         ],
       ),
@@ -650,6 +664,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
   }
 
   Widget _buildThumbnailStrip() {
+    // Miniatura mostrada a 46x62 lógicos — não faz sentido descodificar a
+    // imagem à resolução total da câmara só para isto.
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final cacheW = (46 * dpr).round();
+    final cacheH = (62 * dpr).round();
     return Container(
       color: Colors.black,
       height: 80,
@@ -663,7 +682,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
             ClipRRect(
               borderRadius: BorderRadius.circular(6),
               child: Image.file(File(_pages[i]),
-                  width: 46, height: 62, fit: BoxFit.cover),
+                  width: 46,
+                  height: 62,
+                  fit: BoxFit.cover,
+                  cacheWidth: cacheW,
+                  cacheHeight: cacheH),
             ),
             Positioned(
               top: 2,
@@ -701,13 +724,13 @@ class _ScannerScreenState extends State<ScannerScreen> {
               height: 52,
               decoration: BoxDecoration(
                 color: _canFinalize
-                    ? const Color(0xFF1A73E8).withOpacity(0.15)
-                    : Colors.white.withOpacity(0.06),
+                    ? const Color(0xFF1A73E8).withValues(alpha: 0.15)
+                    : Colors.white.withValues(alpha: 0.06),
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
                   color: _canFinalize
                       ? const Color(0xFF1A73E8)
-                      : Colors.white.withOpacity(0.1),
+                      : Colors.white.withValues(alpha: 0.1),
                   width: 1,
                 ),
               ),
@@ -730,9 +753,13 @@ class _ScannerScreenState extends State<ScannerScreen> {
             ),
           ),
 
-          // Botão captura
+          // Botão captura — no modo BI/ID, preenche o próximo lado em falta
+          // (frente primeiro, depois verso), tal como tocar num slot faria.
           GestureDetector(
-            onTap: _isCapturing ? null : _capture,
+            onTap: _isCapturing
+                ? null
+                : () => _capture(
+                    idFront: _mode == ScanMode.id ? _idFront == null : null),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 100),
               width: 72,
@@ -740,8 +767,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: _isCapturing ? Colors.grey : Colors.white,
-                border:
-                    Border.all(color: Colors.white.withOpacity(0.3), width: 4),
+                border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.3), width: 4),
               ),
               child: _isCapturing
                   ? const Padding(
@@ -760,9 +787,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
               height: 52,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Colors.white.withOpacity(0.08),
-                border:
-                    Border.all(color: Colors.white.withOpacity(0.1), width: 1),
+                color: Colors.white.withValues(alpha: 0.08),
+                border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.1), width: 1),
               ),
               child: const Icon(Icons.photo_library_outlined,
                   color: Colors.white60, size: 22),
@@ -848,7 +875,7 @@ class _ScanLineState extends State<_ScanLine>
             decoration: BoxDecoration(
               gradient: LinearGradient(colors: [
                 Colors.transparent,
-                const Color(0xFF1A73E8).withOpacity(0.8),
+                const Color(0xFF1A73E8).withValues(alpha: 0.8),
                 Colors.transparent,
               ]),
             ),
@@ -862,80 +889,96 @@ class _IdSlot extends StatelessWidget {
   final String? path;
   final bool captured;
   final bool locked;
+  final VoidCallback onTap;
   const _IdSlot(
       {required this.label,
       required this.path,
       required this.captured,
+      required this.onTap,
       this.locked = false});
   @override
   Widget build(BuildContext context) {
     return Expanded(
-      child: Container(
-        height: 68,
-        decoration: BoxDecoration(
-          color: captured
-              ? const Color(0xFF1A73E8).withOpacity(0.12)
-              : Colors.white.withOpacity(0.06),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          height: 68,
+          decoration: BoxDecoration(
             color: captured
-                ? const Color(0xFF1A73E8)
-                : Colors.white.withOpacity(0.2),
-            width: captured ? 1.5 : 1,
+                ? const Color(0xFF1A73E8).withValues(alpha: 0.12)
+                : Colors.white.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: captured
+                  ? const Color(0xFF1A73E8)
+                  : Colors.white.withValues(alpha: 0.2),
+              width: captured ? 1.5 : 1,
+            ),
           ),
-        ),
-        child: path != null
-            ? ClipRRect(
-                borderRadius: BorderRadius.circular(9),
-                // PDFs não podem ser renderizados com Image.file — mostrar ícone
-                child: path!.toLowerCase().endsWith('.pdf')
-                    ? Container(
-                        color: const Color(0xFF1A73E8).withOpacity(0.08),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.picture_as_pdf,
-                                color: Color(0xFF1A73E8), size: 28),
-                            const SizedBox(height: 4),
-                            Text('$label ✓',
-                                style: const TextStyle(
-                                    color: Color(0xFF1A73E8),
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w500)),
-                          ],
-                        ),
-                      )
-                    : Stack(fit: StackFit.expand, children: [
-                        Image.file(File(path!), fit: BoxFit.cover),
-                        Positioned(
-                          bottom: 4,
-                          left: 0,
-                          right: 0,
-                          child: Center(
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                  color: Colors.black54,
-                                  borderRadius: BorderRadius.circular(8)),
-                              child: Text('$label ✓',
+          child: path != null
+              ? ClipRRect(
+                  borderRadius: BorderRadius.circular(9),
+                  // PDFs não podem ser renderizados com Image.file — mostrar ícone
+                  child: path!.toLowerCase().endsWith('.pdf')
+                      ? Container(
+                          color:
+                              const Color(0xFF1A73E8).withValues(alpha: 0.08),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.picture_as_pdf,
+                                  color: Color(0xFF1A73E8), size: 28),
+                              const SizedBox(height: 4),
+                              Text('$label ✓',
                                   style: const TextStyle(
-                                      color: Colors.white, fontSize: 10)),
+                                      color: Color(0xFF1A73E8),
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w500)),
+                            ],
+                          ),
+                        )
+                      : Stack(fit: StackFit.expand, children: [
+                          Image.file(
+                            File(path!),
+                            fit: BoxFit.cover,
+                            // Slot pequeno (~metade da largura do ecrã, 68px
+                            // de altura) — não precisa da imagem à resolução
+                            // total da câmara.
+                            cacheWidth: (MediaQuery.sizeOf(context).width *
+                                    MediaQuery.devicePixelRatioOf(context) /
+                                    2)
+                                .round(),
+                          ),
+                          Positioned(
+                            bottom: 4,
+                            left: 0,
+                            right: 0,
+                            child: Center(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                    color: Colors.black54,
+                                    borderRadius: BorderRadius.circular(8)),
+                                child: Text('$label ✓',
+                                    style: const TextStyle(
+                                        color: Colors.white, fontSize: 10)),
+                              ),
                             ),
                           ),
-                        ),
-                      ]))
-            : Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.credit_card_outlined,
-                      color: Colors.white30, size: 22),
-                  const SizedBox(height: 4),
-                  Text(label,
-                      style:
-                          const TextStyle(color: Colors.white38, fontSize: 11)),
-                ],
-              ),
+                        ]))
+              : Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.credit_card_outlined,
+                        color: Colors.white30, size: 22),
+                    const SizedBox(height: 4),
+                    Text(label,
+                        style: const TextStyle(
+                            color: Colors.white38, fontSize: 11)),
+                  ],
+                ),
+        ),
       ),
     );
   }

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 import '../models/document_model.dart';
@@ -59,8 +60,13 @@ class DocumentTile extends StatelessWidget {
         doc: document,
         onDelete: () async {
           final confirmed = await _confirmDelete(context);
-          if (confirmed == true) {
+          if (confirmed != true || !context.mounted) return;
+          final messenger = ScaffoldMessenger.of(context);
+          try {
             await StorageService.deleteDocument(document);
+          } catch (_) {
+            messenger.showSnackBar(const SnackBar(
+                content: Text('Não foi possível eliminar o documento.')));
           }
         },
       ),
@@ -73,13 +79,19 @@ class DocumentTile extends StatelessWidget {
       key: ValueKey(document.key),
       direction: DismissDirection.endToStart,
       confirmDismiss: (_) => _confirmDelete(context),
-      onDismissed: (_) => StorageService.deleteDocument(document),
+      onDismissed: (_) {
+        final messenger = ScaffoldMessenger.of(context);
+        StorageService.deleteDocument(document).catchError((_) {
+          messenger.showSnackBar(const SnackBar(
+              content: Text('Não foi possível eliminar o documento.')));
+        });
+      },
       background: Container(
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 20),
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         decoration: BoxDecoration(
-          color: const Color(0xFFD93025).withOpacity(0.1),
+          color: const Color(0xFFD93025).withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(12),
         ),
         child: const Icon(Icons.delete_outline, color: Color(0xFFD93025)),
@@ -114,10 +126,17 @@ class DocumentTile extends StatelessWidget {
                 const Icon(Icons.more_vert, color: Color(0xFFCCCCCC), size: 20),
             onPressed: () => _showOptions(context),
           ),
-          onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                  builder: (_) => PDFViewerScreen(path: document.path))),
+          onTap: () {
+            if (!File(document.path).existsSync()) {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('Ficheiro não encontrado — pode ter sido apagado.')));
+              return;
+            }
+            Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => PDFViewerScreen(path: document.path)));
+          },
         ),
       ),
     );
@@ -157,9 +176,15 @@ class _DocOptions extends StatelessWidget {
           leading: const Icon(Icons.open_in_new_outlined, color: _kBlue),
           title: const Text('Abrir'),
           onTap: () {
-            Navigator.pop(context);
-            Navigator.push(
-                context,
+            final navigator = Navigator.of(context);
+            final messenger = ScaffoldMessenger.of(context);
+            navigator.pop();
+            if (!File(doc.path).existsSync()) {
+              messenger.showSnackBar(const SnackBar(
+                  content: Text('Ficheiro não encontrado — pode ter sido apagado.')));
+              return;
+            }
+            navigator.push(
                 MaterialPageRoute(
                     builder: (_) => PDFViewerScreen(path: doc.path)));
           },
@@ -168,9 +193,16 @@ class _DocOptions extends StatelessWidget {
           leading: const Icon(Icons.share_outlined, color: _kBlue),
           title: const Text('Partilhar'),
           onTap: () async {
+            final messenger = ScaffoldMessenger.of(context);
             Navigator.pop(context);
-            await Share.shareXFiles([XFile(doc.path)],
-                text: 'Documento do MS ScanNow');
+            try {
+              await SharePlus.instance.share(ShareParams(
+                  files: [XFile(doc.path)],
+                  text: 'Documento do MS ScanNow'));
+            } catch (_) {
+              messenger.showSnackBar(const SnackBar(
+                  content: Text('Não foi possível partilhar o documento.')));
+            }
           },
         ),
         ListTile(
@@ -212,18 +244,25 @@ class _DocOptions extends StatelessWidget {
               onPressed: () => Navigator.pop(ctx),
               child: const Text('Cancelar')),
           FilledButton(
-            onPressed: () {
+            onPressed: () async {
               final name = ctrl.text.trim();
+              final navigator = Navigator.of(ctx);
+              final messenger = ScaffoldMessenger.of(ctx);
               if (name.isNotEmpty) {
-                doc.name = name;
-                doc.save();
+                try {
+                  doc.name = name;
+                  await doc.save();
+                } catch (_) {
+                  messenger.showSnackBar(const SnackBar(
+                      content: Text('Não foi possível renomear o documento.')));
+                }
               }
-              Navigator.pop(ctx);
+              navigator.pop();
             },
             child: const Text('Guardar'),
           ),
         ],
       ),
-    );
+    ).then((_) => ctrl.dispose());
   }
 }
