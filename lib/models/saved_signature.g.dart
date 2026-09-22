@@ -1,44 +1,38 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
-part of 'document_model.dart';
+part of 'saved_signature.dart';
 
 // **************************************************************************
 // TypeAdapterGenerator
 // **************************************************************************
 
-class DocumentModelAdapter extends TypeAdapter<DocumentModel> {
+class SavedSignatureAdapter extends TypeAdapter<SavedSignature> {
   @override
-  final int typeId = 0;
+  final int typeId = 1;
 
   @override
-  DocumentModel read(BinaryReader reader) {
+  SavedSignature read(BinaryReader reader) {
     final numOfFields = reader.readByte();
     final fields = <int, dynamic>{
       for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
     };
-    return DocumentModel(
+    return SavedSignature(
       name: fields[0] as String,
-      path: fields[1] as String,
-      type: fields[2] as String,
-      date: fields[3] as DateTime,
-      pageCount: fields[4] == null ? 1 : fields[4] as int,
+      bytes: fields[1] as Uint8List,
+      date: fields[2] as DateTime,
     );
   }
 
   @override
-  void write(BinaryWriter writer, DocumentModel obj) {
+  void write(BinaryWriter writer, SavedSignature obj) {
     writer
-      ..writeByte(5)
+      ..writeByte(3)
       ..writeByte(0)
       ..write(obj.name)
       ..writeByte(1)
-      ..write(obj.path)
+      ..write(obj.bytes)
       ..writeByte(2)
-      ..write(obj.type)
-      ..writeByte(3)
-      ..write(obj.date)
-      ..writeByte(4)
-      ..write(obj.pageCount);
+      ..write(obj.date);
   }
 
   @override
@@ -47,7 +41,7 @@ class DocumentModelAdapter extends TypeAdapter<DocumentModel> {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is DocumentModelAdapter &&
+      other is SavedSignatureAdapter &&
           runtimeType == other.runtimeType &&
           typeId == other.typeId;
 }

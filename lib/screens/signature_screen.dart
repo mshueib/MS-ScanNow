@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:signature/signature.dart';
+import '../widgets/primary_button.dart';
+import '../widgets/safe_bottom_panel.dart';
 
 const _kBlue = Color(0xFF1A73E8);
 
@@ -115,163 +117,162 @@ class _SignatureScreenState extends State<SignatureScreen> {
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text(
-              'Assine com o dedo ou com a caneta',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: Color(0xFF636366)),
-            ),
-            const SizedBox(height: 12),
+      body: SafeBottomPanel(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Assine com o dedo ou com a caneta',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: Color(0xFF636366)),
+              ),
+              const SizedBox(height: 12),
 
-            // Área de assinatura
-            Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(14),
-                  border:
-                      Border.all(color: _kBlue.withValues(alpha: 0.25), width: 1.5),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(13),
-                  child: Stack(children: [
-                    Signature(
-                      controller: _ctrl,
-                      backgroundColor: Colors.white,
-                    ),
-                    // Linha de base
-                    Positioned(
-                      bottom: 50,
-                      left: 40,
-                      right: 40,
-                      child: Container(height: 1, color: Colors.grey.shade200),
-                    ),
-                    Positioned(
-                      bottom: 36,
-                      left: 40,
-                      child: Text('Assinatura',
-                          style: TextStyle(
-                              fontSize: 10, color: Colors.grey.shade400)),
-                    ),
-                    if (!_hasDrawn)
-                      Center(
-                        child: Text('Assine aqui',
-                            style: TextStyle(
-                                fontSize: 16, color: Colors.grey.shade300)),
+              // Área de assinatura
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                        color: _kBlue.withValues(alpha: 0.25), width: 1.5),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(13),
+                    child: Stack(children: [
+                      Signature(
+                        controller: _ctrl,
+                        backgroundColor: Colors.white,
                       ),
-                  ]),
+                      // Linha de base
+                      Positioned(
+                        bottom: 50,
+                        left: 40,
+                        right: 40,
+                        child:
+                            Container(height: 1, color: Colors.grey.shade200),
+                      ),
+                      Positioned(
+                        bottom: 36,
+                        left: 40,
+                        child: Text('Assinatura',
+                            style: TextStyle(
+                                fontSize: 10, color: Colors.grey.shade400)),
+                      ),
+                      if (!_hasDrawn)
+                        Center(
+                          child: Text('Assine aqui',
+                              style: TextStyle(
+                                  fontSize: 16, color: Colors.grey.shade300)),
+                        ),
+                    ]),
+                  ),
                 ),
               ),
-            ),
 
-            const SizedBox(height: 16),
+              const SizedBox(height: 16),
 
-            // Controlos: cor e espessura
-            Row(
-              children: [
-                const Text('Cor:',
-                    style: TextStyle(fontSize: 12, color: Color(0xFF636366))),
-                const SizedBox(width: 8),
-                ..._colors.map((c) => GestureDetector(
-                      onTap: () => _setPenColor(c),
-                      child: Container(
-                        width: 28,
-                        height: 28,
-                        margin: const EdgeInsets.only(right: 6),
-                        decoration: BoxDecoration(
-                          color: c,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: _penColor == c
-                                ? Colors.white
+              // Controlos: cor e espessura
+              Row(
+                children: [
+                  const Text('Cor:',
+                      style: TextStyle(fontSize: 12, color: Color(0xFF636366))),
+                  const SizedBox(width: 8),
+                  ..._colors.map((c) => GestureDetector(
+                        onTap: () => _setPenColor(c),
+                        child: Container(
+                          width: 28,
+                          height: 28,
+                          margin: const EdgeInsets.only(right: 6),
+                          decoration: BoxDecoration(
+                            color: c,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: _penColor == c
+                                  ? Colors.white
+                                  : Colors.transparent,
+                              width: 2.5,
+                            ),
+                            boxShadow: _penColor == c
+                                ? [
+                                    BoxShadow(
+                                        color: c.withValues(alpha: 0.5),
+                                        blurRadius: 6,
+                                        spreadRadius: 1)
+                                  ]
+                                : null,
+                          ),
+                        ),
+                      )),
+                  const Spacer(),
+                  const Text('Esp.:',
+                      style: TextStyle(fontSize: 12, color: Color(0xFF636366))),
+                  const SizedBox(width: 6),
+                  ..._widths.map((w) => GestureDetector(
+                        onTap: () => _setPenWidth(w),
+                        child: Container(
+                          width: 34,
+                          height: 34,
+                          margin: const EdgeInsets.only(left: 6),
+                          decoration: BoxDecoration(
+                            color: _penWidth == w
+                                ? _kBlue.withValues(alpha: 0.1)
                                 : Colors.transparent,
-                            width: 2.5,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: _penWidth == w
+                                  ? _kBlue
+                                  : Colors.grey.shade300,
+                              width: 0.5,
+                            ),
                           ),
-                          boxShadow: _penColor == c
-                              ? [
-                                  BoxShadow(
-                                      color: c.withValues(alpha: 0.5),
-                                      blurRadius: 6,
-                                      spreadRadius: 1)
-                                ]
-                              : null,
-                        ),
-                      ),
-                    )),
-                const Spacer(),
-                const Text('Esp.:',
-                    style: TextStyle(fontSize: 12, color: Color(0xFF636366))),
-                const SizedBox(width: 6),
-                ..._widths.map((w) => GestureDetector(
-                      onTap: () => _setPenWidth(w),
-                      child: Container(
-                        width: 34,
-                        height: 34,
-                        margin: const EdgeInsets.only(left: 6),
-                        decoration: BoxDecoration(
-                          color: _penWidth == w
-                              ? _kBlue.withValues(alpha: 0.1)
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color:
-                                _penWidth == w ? _kBlue : Colors.grey.shade300,
-                            width: 0.5,
-                          ),
-                        ),
-                        child: Center(
-                          child: Container(
-                            width: w * 4,
-                            height: w,
-                            decoration: BoxDecoration(
-                              color: _penColor,
-                              borderRadius: BorderRadius.circular(1),
+                          child: Center(
+                            child: Container(
+                              width: w * 4,
+                              height: w,
+                              decoration: BoxDecoration(
+                                color: _penColor,
+                                borderRadius: BorderRadius.circular(1),
+                              ),
                             ),
                           ),
                         ),
+                      )),
+                ],
+              ),
+
+              const SizedBox(height: 16),
+
+              // Botões
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
                       ),
-                    )),
-              ],
-            ),
-
-            const SizedBox(height: 16),
-
-            // Botões
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
+                      child: const Text('Cancelar'),
                     ),
-                    child: const Text('Cancelar'),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 2,
-                  child: FilledButton.icon(
-                    onPressed: _hasDrawn ? _confirm : null,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: _kBlue,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: PrimaryButton(
+                      onPressed: _hasDrawn ? _confirm : null,
+                      color: _kBlue,
+                      icon: const Icon(Icons.check),
+                      label: 'Confirmar assinatura',
                     ),
-                    icon: const Icon(Icons.check),
-                    label: const Text('Confirmar assinatura'),
                   ),
-                ),
-              ],
-            ),
-          ],
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

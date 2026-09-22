@@ -31,8 +31,8 @@ class _PDFViewerScreenState extends State<PDFViewerScreen> {
         text: 'Documento digitalizado',
       ));
     } catch (_) {
-      messenger.showSnackBar(
-          const SnackBar(content: Text('Não foi possível partilhar o documento.')));
+      messenger.showSnackBar(const SnackBar(
+          content: Text('Não foi possível partilhar o documento.')));
     }
   }
 
@@ -68,7 +68,8 @@ class _PDFViewerScreenState extends State<PDFViewerScreen> {
                       style: TextStyle(fontSize: 16)),
                   const SizedBox(height: 4),
                   Text('Pode ter sido apagado ou movido fora da app.',
-                      style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+                      style:
+                          TextStyle(fontSize: 13, color: Colors.grey.shade600)),
                 ],
               ),
             )

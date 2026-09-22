@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'models/document_model.dart';
+import 'models/saved_signature.dart';
 import 'screens/home_screen.dart';
 
 void main() async {
@@ -10,6 +11,7 @@ void main() async {
   await Hive.initFlutter();
 
   Hive.registerAdapter(DocumentModelAdapter());
+  Hive.registerAdapter(SavedSignatureAdapter());
 
   try {
     await Hive.openBox<DocumentModel>('documents');
@@ -19,6 +21,16 @@ void main() async {
     if (kDebugMode) debugPrint('Hive box corrompida, a recriar: $e');
     await Hive.deleteBoxFromDisk('documents');
     await Hive.openBox<DocumentModel>('documents');
+  }
+
+  try {
+    await Hive.openBox<SavedSignature>('signatures');
+  } catch (e) {
+    if (kDebugMode) {
+      debugPrint('Hive box de assinaturas corrompida, a recriar: $e');
+    }
+    await Hive.deleteBoxFromDisk('signatures');
+    await Hive.openBox<SavedSignature>('signatures');
   }
 
   runApp(const ScannerApp());

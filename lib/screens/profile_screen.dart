@@ -4,6 +4,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import '../models/document_model.dart';
 import '../services/storage_service.dart';
+import '../widgets/safe_bottom_panel.dart';
 
 const _kBlue = Color(0xFF1A73E8);
 
@@ -67,7 +68,6 @@ class ProfileScreen extends StatelessWidget {
                         label: 'Documentos',
                         value: '${docs.length}',
                         color: _kBlue,
-                        bg: const Color(0xFFE8F0FE),
                       ),
                       const SizedBox(width: 10),
                       _StatCard(
@@ -75,7 +75,6 @@ class ProfileScreen extends StatelessWidget {
                         label: 'Este mês',
                         value: '${_thisMonth(docs)}',
                         color: const Color(0xFF1E8E3E),
-                        bg: const Color(0xFFE6F4EA),
                       ),
                       const SizedBox(width: 10),
                       _StatCard(
@@ -83,7 +82,6 @@ class ProfileScreen extends StatelessWidget {
                         label: 'Tamanho',
                         value: _totalSize(docs),
                         color: const Color(0xFFF9AB00),
-                        bg: const Color(0xFFFEF7E0),
                       ),
                     ],
                   ),
@@ -144,11 +142,12 @@ class ProfileScreen extends StatelessWidget {
                   return;
                 }
                 try {
-                  await SharePlus.instance
-                      .share(ShareParams(files: files, text: 'Documentos do MS ScanNow'));
+                  await SharePlus.instance.share(ShareParams(
+                      files: files, text: 'Documentos do MS ScanNow'));
                 } catch (_) {
                   messenger.showSnackBar(const SnackBar(
-                      content: Text('Não foi possível partilhar os documentos.')));
+                      content:
+                          Text('Não foi possível partilhar os documentos.')));
                 }
               },
             ),
@@ -165,7 +164,10 @@ class ProfileScreen extends StatelessWidget {
               onTap: () => _showAbout(context),
             ),
 
-            const SizedBox(height: 32),
+            SizedBox(
+                height: 32 +
+                    MediaQuery.paddingOf(context).bottom +
+                    SafeBottomPanel.extraInset(context)),
           ],
         ),
       ),
@@ -215,8 +217,8 @@ class ProfileScreen extends StatelessWidget {
               } catch (_) {
                 navigator.pop();
                 messenger.showSnackBar(const SnackBar(
-                    content:
-                        Text('Não foi possível eliminar todos os documentos.')));
+                    content: Text(
+                        'Não foi possível eliminar todos os documentos.')));
               }
             },
             style: FilledButton.styleFrom(
@@ -233,8 +235,10 @@ class ProfileScreen extends StatelessWidget {
       context: context,
       applicationName: 'MS ScanNow',
       applicationVersion: '1.0.0',
-      applicationIcon:
-          const Icon(Icons.document_scanner, color: _kBlue, size: 40),
+      applicationIcon: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Image.asset('assets/icon/icon.png', width: 40, height: 40),
+      ),
       children: const [
         Text('Scanner inteligente de documentos com OCR, PDF, '
             'assinatura digital e suporte a BI/ID.'),
@@ -248,13 +252,12 @@ class ProfileScreen extends StatelessWidget {
 class _StatCard extends StatelessWidget {
   final IconData icon;
   final String label, value;
-  final Color color, bg;
+  final Color color;
   const _StatCard(
       {required this.icon,
       required this.label,
       required this.value,
-      required this.color,
-      required this.bg});
+      required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -265,6 +268,10 @@ class _StatCard extends StatelessWidget {
           color: Colors.white,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: const Color(0x12000000), width: 0.5),
+          boxShadow: const [
+            BoxShadow(
+                color: Color(0x08000000), blurRadius: 6, offset: Offset(0, 2)),
+          ],
         ),
         child: Column(
           children: [
@@ -272,8 +279,20 @@ class _StatCard extends StatelessWidget {
               width: 36,
               height: 36,
               decoration: BoxDecoration(
-                  color: bg, borderRadius: BorderRadius.circular(10)),
-              child: Icon(icon, color: color, size: 18),
+                borderRadius: BorderRadius.circular(11),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [color, Color.lerp(color, Colors.black, 0.22)!],
+                ),
+                boxShadow: [
+                  BoxShadow(
+                      color: color.withValues(alpha: 0.3),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2)),
+                ],
+              ),
+              child: Icon(icon, color: Colors.white, size: 18),
             ),
             const SizedBox(height: 8),
             Text(value,
@@ -334,6 +353,10 @@ class _ProfileDocRow extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0x12000000), width: 0.5),
+        boxShadow: const [
+          BoxShadow(
+              color: Color(0x08000000), blurRadius: 6, offset: Offset(0, 2)),
+        ],
       ),
       child: Row(
         children: [
@@ -369,13 +392,13 @@ class _ProfileDocRow extends StatelessWidget {
               final messenger = ScaffoldMessenger.of(context);
               if (!File(doc.path).existsSync()) {
                 messenger.showSnackBar(const SnackBar(
-                    content: Text('Ficheiro não encontrado — pode ter sido apagado.')));
+                    content: Text(
+                        'Ficheiro não encontrado — pode ter sido apagado.')));
                 return;
               }
               try {
                 await SharePlus.instance.share(ShareParams(
-                    files: [XFile(doc.path)],
-                    text: 'Documento do MS ScanNow'));
+                    files: [XFile(doc.path)], text: 'Documento do MS ScanNow'));
               } catch (_) {
                 messenger.showSnackBar(const SnackBar(
                     content: Text('Não foi possível partilhar o documento.')));
@@ -407,6 +430,10 @@ class _ActionTile extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0x12000000), width: 0.5),
+        boxShadow: const [
+          BoxShadow(
+              color: Color(0x08000000), blurRadius: 6, offset: Offset(0, 2)),
+        ],
       ),
       child: ListTile(
         leading: Container(

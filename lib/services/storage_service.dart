@@ -29,6 +29,20 @@ class StorageService {
     await doc.delete();
   }
 
+  /// Apaga vários documentos de uma vez (seleção múltipla no Histórico),
+  /// incluindo os ficheiros em disco.
+  static Future<void> deleteMany(List<DocumentModel> docs) async {
+    for (final doc in docs) {
+      try {
+        final file = File(doc.path);
+        if (await file.exists()) await file.delete();
+      } catch (_) {}
+      try {
+        await doc.delete();
+      } catch (_) {}
+    }
+  }
+
   /// Apaga todos os documentos, incluindo os ficheiros em disco.
   static Future<void> deleteAll() async {
     for (final doc in _box.values.toList()) {

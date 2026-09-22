@@ -36,6 +36,14 @@ dependencies:
   # Assinatura
   signature: ^5.4.0
 
+  # Importar ficheiros PDF já existentes
+  file_picker: ^8.1.4
+
+  # Rasterização robusta de PDFs (fallback para Juntar/Comprimir quando o
+  # PDF de origem não guarda a imagem em bytes contíguos, ex.: PDFs
+  # devolvidos diretamente pelo ML Kit nalguns Samsung)
+  printing: ^5.13.4
+
   cupertino_icons: ^1.0.6
 
 dev_dependencies:
@@ -44,6 +52,15 @@ dev_dependencies:
   flutter_lints: ^3.0.0
   hive_generator: ^2.0.1
   build_runner: ^2.4.9
+  flutter_launcher_icons: ^0.13.1
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/images/logo.png
+    - assets/icon/icon.png
+
+flutter_launcher_icons:
+  image_path: "assets/icon/icon.png"
+  android: true
+  ios: true

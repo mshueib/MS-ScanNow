@@ -6,6 +6,7 @@ import 'package:flutter_doc_scanner/flutter_doc_scanner.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../widgets/safe_bottom_panel.dart';
 import 'preview_screen.dart';
 
 enum ScanMode { general, document, id }
@@ -47,7 +48,16 @@ extension ScanModeExt on ScanMode {
 
 class ScannerScreen extends StatefulWidget {
   final ScanMode initialMode;
-  const ScannerScreen({super.key, this.initialMode = ScanMode.document});
+  // Abre diretamente o seletor de galeria em vez da câmara — usado pelo
+  // atalho "Importar Imagens" da Home. O resto do ecrã (tira de miniaturas,
+  // botão "Usar", etc.) funciona exatamente na mesma, já que reaproveita o
+  // mesmo `_pickFromGallery` do botão de galeria existente.
+  final bool startWithGallery;
+  const ScannerScreen({
+    super.key,
+    this.initialMode = ScanMode.document,
+    this.startWithGallery = false,
+  });
   @override
   State<ScannerScreen> createState() => _ScannerScreenState();
 }
@@ -68,6 +78,17 @@ class _ScannerScreenState extends State<ScannerScreen> {
   bool _idTargetFront = true;
 
   final _picker = ImagePicker();
+
+  @override
+  void initState() {
+    super.initState();
+    // Abre a câmara (ou a galeria, se pedido) imediatamente ao entrar no
+    // ecrã — o utilizador já tocou em "Scan"/"Importar", não faz sentido
+    // pedir um segundo toque. As capturas/seleções seguintes continuam a
+    // usar os botões normais.
+    WidgetsBinding.instance.addPostFrameCallback((_) =>
+        widget.startWithGallery ? _pickFromGallery() : _capture());
+  }
 
   // ─── Permissão ────────────────────────────────────────────────────────────
 
@@ -335,19 +356,17 @@ class _ScannerScreenState extends State<ScannerScreen> {
   void _navigateToPdfPreview(String pdfPath) {
     if (!mounted) return;
     if (_mode == ScanMode.id) {
+      final capturedFront = _idTargetFront;
       setState(() {
         if (_idTargetFront) {
           _idFront = pdfPath;
           _idFrontIsPdf = true;
-          _showSnack(_idBack == null
-              ? 'Frente capturada! Toque no verso para continuar.'
-              : 'Frente atualizada.');
         } else {
           _idBack = pdfPath;
           _idBackIsPdf = true;
-          _showSnack('Verso capturado! Toque em "Usar" para continuar.');
         }
       });
+      _afterIdCapture(capturedFront: capturedFront);
     } else {
       Navigator.push(
         context,
@@ -367,21 +386,46 @@ class _ScannerScreenState extends State<ScannerScreen> {
     if (!mounted || paths.isEmpty) return;
 
     if (_mode == ScanMode.id) {
+      final capturedFront = _idTargetFront;
       setState(() {
         if (_idTargetFront) {
           _idFront = paths.first;
           _idFrontIsPdf = false;
-          _showSnack(_idBack == null
-              ? 'Frente capturada! Toque no verso para continuar.'
-              : 'Frente atualizada.');
         } else {
           _idBack = paths.first;
           _idBackIsPdf = false;
-          _showSnack('Verso capturado! Toque em "Usar" para continuar.');
         }
       });
+      _afterIdCapture(capturedFront: capturedFront);
     } else {
       setState(() => _pages.addAll(paths));
+    }
+  }
+
+  /// Depois de capturar um lado do BI/ID avança automaticamente para o
+  /// passo seguinte — verso (se ainda não foi feito) ou finalizar (quando
+  /// já estão os dois lados) — para que "Frente e Verso" seja um fluxo
+  /// direto, sem exigir um toque manual entre cada captura.
+  void _afterIdCapture({required bool capturedFront}) {
+    if (capturedFront) {
+      if (_idBack == null) {
+        _showSnack('Frente capturada! A abrir a câmara para o verso...');
+        // Espera um pouco antes de lançar a câmara outra vez — a Activity
+        // nativa do scanner anterior ainda está a fechar/entregar o
+        // controlo de volta à app; abrir logo a seguir (mesmo frame) pode
+        // ser ignorado pelo Android a meio dessa transição, e a câmara do
+        // verso nunca chega a aparecer.
+        Future.delayed(const Duration(milliseconds: 600), () {
+          if (mounted) _capture(idFront: false);
+        });
+      } else {
+        _showSnack('Frente atualizada.');
+      }
+    } else {
+      _showSnack('Verso capturado!');
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) _finalize();
+      });
     }
   }
 
@@ -634,14 +678,12 @@ class _ScannerScreenState extends State<ScannerScreen> {
           const SizedBox(height: 8),
           Row(children: [
             _IdSlot(
-                label: 'Frente',
                 path: _idFront,
                 captured: _idFront != null,
                 onTap: _isCapturing ? () {} : () => _capture(idFront: true),
                 locked: false), // frente nunca fica bloqueada
             const SizedBox(width: 10),
             _IdSlot(
-                label: 'Verso',
                 path: _idBack,
                 captured: _idBack != null,
                 onTap: _isCapturing ? () {} : () => _capture(idFront: false),
@@ -709,9 +751,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
   }
 
   Widget _buildControls() {
+    final extraBottom = SafeBottomPanel.extraInset(context);
     return Container(
       color: Colors.black,
-      padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
+      padding: EdgeInsets.fromLTRB(24, 12, 24, 20 + extraBottom),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -885,14 +928,12 @@ class _ScanLineState extends State<_ScanLine>
 }
 
 class _IdSlot extends StatelessWidget {
-  final String label;
   final String? path;
   final bool captured;
   final bool locked;
   final VoidCallback onTap;
   const _IdSlot(
-      {required this.label,
-      required this.path,
+      {required this.path,
       required this.captured,
       required this.onTap,
       this.locked = false});
@@ -923,17 +964,13 @@ class _IdSlot extends StatelessWidget {
                       ? Container(
                           color:
                               const Color(0xFF1A73E8).withValues(alpha: 0.08),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                          child: const Stack(
                             children: [
-                              const Icon(Icons.picture_as_pdf,
-                                  color: Color(0xFF1A73E8), size: 28),
-                              const SizedBox(height: 4),
-                              Text('$label ✓',
-                                  style: const TextStyle(
-                                      color: Color(0xFF1A73E8),
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w500)),
+                              Center(
+                                child: Icon(Icons.picture_as_pdf,
+                                    color: Color(0xFF1A73E8), size: 28),
+                              ),
+                              _CapturedBadge(),
                             ],
                           ),
                         )
@@ -949,36 +986,34 @@ class _IdSlot extends StatelessWidget {
                                     2)
                                 .round(),
                           ),
-                          Positioned(
-                            bottom: 4,
-                            left: 0,
-                            right: 0,
-                            child: Center(
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 2),
-                                decoration: BoxDecoration(
-                                    color: Colors.black54,
-                                    borderRadius: BorderRadius.circular(8)),
-                                child: Text('$label ✓',
-                                    style: const TextStyle(
-                                        color: Colors.white, fontSize: 10)),
-                              ),
-                            ),
-                          ),
+                          const _CapturedBadge(),
                         ]))
-              : Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.credit_card_outlined,
-                        color: Colors.white30, size: 22),
-                    const SizedBox(height: 4),
-                    Text(label,
-                        style: const TextStyle(
-                            color: Colors.white38, fontSize: 11)),
-                  ],
+              : const Center(
+                  child: Icon(Icons.credit_card_outlined,
+                      color: Colors.white30, size: 26),
                 ),
         ),
+      ),
+    );
+  }
+}
+
+/// Marca de "capturado" — substitui as legendas de texto "Frente"/"Verso"
+/// por um simples ícone, já que a posição (esquerda/direita) já identifica
+/// o lado sem precisar de escrever.
+class _CapturedBadge extends StatelessWidget {
+  const _CapturedBadge();
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      top: 4,
+      right: 4,
+      child: Container(
+        width: 18,
+        height: 18,
+        decoration: const BoxDecoration(
+            color: Color(0xFF1A73E8), shape: BoxShape.circle),
+        child: const Icon(Icons.check, color: Colors.white, size: 12),
       ),
     );
   }
